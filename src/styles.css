@@ -377,6 +377,14 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--e
 input.narrow { width: 6rem; }      /* w-24 */
 input.tiny { width: 5rem; }        /* w-20 */
 
+/* checkboxes and file pickers, so they don't look like another app entirely */
+input[type=checkbox], input[type=radio] { width: 1.05rem; height: 1.05rem; accent-color: var(--emerald-focus); cursor: pointer; vertical-align: middle; }
+.row label:has(> input[type=checkbox]), label.inline { display: inline-flex; align-items: center; gap: .5rem; color: var(--z300); font-size: .875rem; cursor: pointer; }
+
+input[type=file] { font-size: .75rem; color: var(--z400); background: var(--field); border: 1px solid var(--line-strong); border-radius: var(--r-sm); padding: .35rem .5rem; }
+input[type=file]::file-selector-button { background: var(--line-strong); color: var(--white); border: none; border-radius: var(--r-sm); padding: .3rem .6rem; font: inherit; font-size: .75rem; cursor: pointer; margin-right: .6rem; transition: background-color var(--fast); }
+input[type=file]::file-selector-button:hover { background: #4d4d55; }
+
 details.nutrition { border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--field); margin-bottom: 1rem; transition: border-color var(--fast); }
 details.nutrition[open] { border-color: var(--line-strong); }
 details.nutrition summary { cursor: pointer; padding: .5rem .75rem; color: var(--z500); font-size: .875rem; list-style-position: inside; }
@@ -395,6 +403,8 @@ button.add-row { background: none; border: none; cursor: pointer; color: var(--e
 button.add-row:hover { color: var(--emerald-bright); transform: translateY(-1px); }
 
 @keyframes popIn { from { opacity: 0; transform: translateY(-4px) scale(.98); } to { opacity: 1; transform: none; } }
+
+.row.switch label { color: var(--z300); font-size: .875rem; cursor: pointer; }
 
 .form-section { margin-bottom: 1.25rem; }
 .form-head-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: .5rem; }

@@ -97,7 +97,7 @@ export function renderSettings(ctx: ViewCtx, mountPoint: HTMLElement, scheduler?
 
     el("section", { class: "panel" },
       el("h3", {}, "Syncing"),
-      el("div", { class: "row" }, autoToggle, el("label", { for: "auto-sync" }, "Sync automatically while online")),
+      el("div", { class: "row switch" }, autoToggle, el("label", { for: "auto-sync" }, "Sync automatically while online")),
       el("div", { class: "row" }, syncButton),
       statusLine,
       el("hr", { class: "sep" }),
