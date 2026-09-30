@@ -6,6 +6,8 @@ import { buildRecipeView, computeRecipeTotals, mixCostPerKg, type IngredientUse,
 import { nextDuplicateName, parseDuplicateName } from "../src/domain/duplicate.ts";
 import { changesSince, mergeChangesets, wins } from "../src/domain/syncMerge.ts";
 import { makeMemoryStore } from "../src/client/store.ts";
+import { distinctRows, ValidationError } from "../src/domain/schema.ts";
+import { mixInputFromForm, recipeInputFromForm } from "../src/client/app.ts";
 import { makeRepository } from "../src/domain/repository.ts";
 import { buildState } from "../src/domain/state.ts";
 import type { RowRecord } from "../src/domain/types.ts";
@@ -176,4 +178,40 @@ test("editing a row never blanks the legacy columns this UI does not show", asyn
 test("outbox selection uses the sync cursor", () => {
   const records = [rec("ingredients", "a", 10, "dev-1"), rec("ingredients", "b", 300, "dev-1")];
   assert.deepEqual(changesSince(records, 100).map((r) => r.pk), ["b"]);
+});
+
+// --- link tables are keyed by what they point at, so a form must not repeat one -------------
+test("distinctRows keeps legal rows and refuses repeats", async () => {
+  const kept = await Effect.runPromise(distinctRows([{ id: "a" }, { id: "b" }], (r) => r.id, "id", "ingredient"));
+  assert.equal(kept.length, 2);
+
+  const rejected = await Effect.runPromise(Effect.either(distinctRows([{ id: "a" }, { id: "a" }], (r) => r.id, "id", "ingredient")));
+  if (rejected._tag !== "Left") assert.fail("repeating a row should have been refused");
+  const error = rejected.left as ValidationError;
+  assert.equal(error._tag, "ValidationError");
+  assert.match(error.reason, /two rows use the same ingredient/);
+});
+
+const mixForm = (rows: Array<[string, number]>): FormData => {
+  const form = new FormData();
+  form.set("name", "Test mix");
+  for (const [ingredient, amount] of rows) { form.append("ingredient_id", ingredient); form.append("amount", String(amount)); }
+  return form;
+};
+
+test("saving a mix whose rows repeat an ingredient is refused instead of silently dropping one", async () => {
+  const good = await Effect.runPromise(mixInputFromForm(mixForm([["oat-flour", 400], ["corn-starch", 600]])));
+  assert.equal(good.components.length, 2);
+
+  const exit = await Effect.runPromiseExit(mixInputFromForm(mixForm([["oat-flour", 400], ["oat-flour", 600]])));
+  assert.equal(exit._tag, "Failure");
+});
+
+test("a recipe cannot list the same ingredient twice across its dry and liquid groups", async () => {
+  const form = new FormData();
+  form.set("name", "Test recipe");
+  form.append("dry_ingredient_id", "butter"); form.append("dry_ingredient_amount", "100");
+  form.append("liquid_ingredient_id", "butter"); form.append("liquid_ingredient_amount", "50");
+  const exit = await Effect.runPromiseExit(recipeInputFromForm(form));
+  assert.equal(exit._tag, "Failure");
 });

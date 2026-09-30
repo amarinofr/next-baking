@@ -6,7 +6,7 @@
 
 import { Effect } from "effect";
 import {
-  decode, IngredientInputSchema, MixInputSchema, RecipeInputSchema, StorageError, ValidationError, numField,
+  decode, distinctRows, IngredientInputSchema, MixInputSchema, RecipeInputSchema, StorageError, ValidationError, numField,
 } from "../domain/schema.ts";
 import { loadSeedRecords } from "../domain/seed.ts";
 import { makeRepository } from "../domain/repository.ts";
@@ -121,10 +121,13 @@ export const mixInputFromForm = (form: FormData): Effect.Effect<typeof MixInputS
   const components = form.getAll("ingredient_id").map(String)
     .map((id, i) => ({ ingredient_id: id, amount: numField(form.getAll("amount")[i], 0) }))
     .filter((c) => c.ingredient_id && c.amount > 0);
-  return decode(MixInputSchema, "mix")({
-    id: String(formValue(form, "id") ?? "") || undefined,
-    name: String(formValue(form, "name") ?? "").trim(),
-    components,
+  return Effect.gen(function* () {
+    const unique = yield* distinctRows(components, (c) => c.ingredient_id, "ingredient_id", "ingredient");
+    return yield* decode(MixInputSchema, "mix")({
+      id: String(formValue(form, "id") ?? "") || undefined,
+      name: String(formValue(form, "name") ?? "").trim(),
+      components: [...unique],
+    });
   });
 };
 
@@ -140,14 +143,20 @@ export const recipeInputFromForm = (form: FormData): Effect.Effect<typeof Recipe
   const mainLiquids = form.getAll("main_liquid_ingredient_id").map(String).map((id, i) => ({ ingredient_id: id, percentage: numField(form.getAll("main_liquid_percentage")[i], 0) }))
     .filter((row) => row.ingredient_id && row.percentage > 0);
 
-  return decode(RecipeInputSchema, "recipe")({
-    id: String(formValue(form, "id") ?? "") || undefined,
-    name: String(formValue(form, "name") ?? "").trim(),
-    instructions: String(formValue(form, "instructions") ?? ""),
-    servings: Math.max(1, Math.trunc(numField(formValue(form, "servings"), 1))),
-    hydration_percent: numField(formValue(form, "hydration_percent"), 65),
-    // An empty selection means "no category"; a hidden field carries the stored one through.
-    category_id: form.has("category_id") ? (String(formValue(form, "category_id") ?? "") || null) : undefined,
-    ingredients, mixes, main_liquids: mainLiquids,
+  return Effect.gen(function* () {
+    // Every link table is keyed by what it points at: repeating one would overwrite itself on save.
+    const ingredients2 = yield* distinctRows(ingredients, (r) => r.ingredient_id, "ingredient_id", "ingredient");
+    const mixes2 = yield* distinctRows(mixes, (r) => r.mix_id, "mix_id", "flour mix");
+    const liquids2 = yield* distinctRows(mainLiquids, (r) => r.ingredient_id, "main_liquid_ingredient_id", "main liquid");
+    return yield* decode(RecipeInputSchema, "recipe")({
+      id: String(formValue(form, "id") ?? "") || undefined,
+      name: String(formValue(form, "name") ?? "").trim(),
+      instructions: String(formValue(form, "instructions") ?? ""),
+      servings: Math.max(1, Math.trunc(numField(formValue(form, "servings"), 1))),
+      hydration_percent: numField(formValue(form, "hydration_percent"), 65),
+      // An empty selection means "no category"; a hidden field carries the stored one through.
+      category_id: form.has("category_id") ? (String(formValue(form, "category_id") ?? "") || null) : undefined,
+      ingredients: [...ingredients2], mixes: [...mixes2], main_liquids: [...liquids2],
+    });
   });
 };
