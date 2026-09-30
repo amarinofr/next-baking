@@ -51,7 +51,7 @@ const launchDevice = async (profile: string): Promise<{ browser: import("puppete
 
 const watchErrors = (page: import("puppeteer-core").Page): string[] => {
   const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
+  page.on("pageerror", (error: unknown) => errors.push(`pageerror: ${String((error as Error)?.message ?? error)}`));
   page.on("requestfailed", (request) => { if (!request.url().includes("/api/sync")) errors.push(`requestfailed: ${request.url()}`); });
   return errors;
 };
