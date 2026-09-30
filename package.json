@@ -14,7 +14,8 @@
     "test": "node --test tests/*.test.ts",
     "e2e": "node scripts/e2e.ts",
     "typecheck": "tsc --noEmit",
-    "export:legacy": "node scripts/export-legacy-db.ts"
+    "export:legacy": "node scripts/export-legacy-db.ts",
+    "verify:data": "node scripts/verify-data.ts"
   },
   "dependencies": {
     "astro": "^5.18.2",

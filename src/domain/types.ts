@@ -19,7 +19,8 @@ export type TableName =
   | "recipes"
   | "recipe_ingredients"
   | "recipe_mixes"
-  | "recipe_main_liquids";
+  | "recipe_main_liquids"
+  | "recipe_categories";
 
 export interface SyncMeta {
   /** epoch millis of the last write to this row on any device */
@@ -105,10 +106,7 @@ interface TableSpec {
 /** Column order is the single source of truth for SQL generation. */
 export const TABLES = {
   ingredients: {
-    columns: [
-      "id", "name", "unit", "created_at", "price", "category", "calories", "protein", "fats",
-      "carbs", "sugar", "fiber", "hybrid_water", "updated_at", "deleted", "origin",
-    ],
+    columns: ["id", "name", "unit", "created_at", "price", "price_unit", "category", "calories", "protein", "fats", "carbs", "sugar", "fiber", "hybrid_water", "updated_at", "deleted", "origin"],
     pkColumns: ["id"],
   },
   flour_mixes: {
@@ -120,10 +118,7 @@ export const TABLES = {
     pkColumns: ["mix_id", "ingredient_id"],
   },
   recipes: {
-    columns: [
-      "id", "name", "instructions", "servings", "hydration_percent", "created_at",
-      "updated_at", "deleted", "origin",
-    ],
+    columns: ["id", "name", "instructions", "category_id", "servings", "hydration_percent", "created_at", "updated_at", "deleted", "origin"],
     pkColumns: ["id"],
   },
   recipe_ingredients: {
@@ -137,6 +132,10 @@ export const TABLES = {
   recipe_main_liquids: {
     columns: ["recipe_id", "ingredient_id", "percentage", "updated_at", "deleted", "origin"],
     pkColumns: ["recipe_id", "ingredient_id"],
+  },
+  recipe_categories: {
+    columns: ["id", "name", "color", "created_at", "updated_at", "deleted", "origin"],
+    pkColumns: ["id"],
   },
 } as const satisfies Record<TableName, TableSpec>;
 

@@ -16,7 +16,7 @@ import { normalizeRow } from "../domain/seed.ts";
 const DDL: Record<TableName, string> = {
   ingredients: `CREATE TABLE IF NOT EXISTS ingredients (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, unit TEXT NOT NULL DEFAULT 'g',
-      created_at TEXT NOT NULL, price REAL, category TEXT CHECK(category IN ('dry','hybrid','liquid')),
+      created_at TEXT NOT NULL, price REAL, price_unit TEXT, category TEXT CHECK(category IN ('dry','hybrid','liquid')),
       calories REAL DEFAULT 0, protein REAL DEFAULT 0, fats REAL DEFAULT 0, carbs REAL DEFAULT 0,
       sugar REAL DEFAULT 0, fiber REAL DEFAULT 0, hybrid_water REAL DEFAULT 0,
       updated_at INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0, origin TEXT NOT NULL DEFAULT '')`,
@@ -30,6 +30,7 @@ const DDL: Record<TableName, string> = {
       PRIMARY KEY (mix_id, ingredient_id))`,
   recipes: `CREATE TABLE IF NOT EXISTS recipes (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, instructions TEXT NOT NULL DEFAULT '',
+      category_id TEXT REFERENCES recipe_categories(id),
       servings INTEGER NOT NULL DEFAULT 1, hydration_percent REAL NOT NULL DEFAULT 65.0, created_at TEXT NOT NULL,
       updated_at INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0, origin TEXT NOT NULL DEFAULT '')`,
   recipe_ingredients: `CREATE TABLE IF NOT EXISTS recipe_ingredients (
@@ -42,12 +43,18 @@ const DDL: Record<TableName, string> = {
       mix_id TEXT NOT NULL REFERENCES flour_mixes(id), amount REAL NOT NULL,
       updated_at INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0, origin TEXT NOT NULL DEFAULT '',
       PRIMARY KEY (recipe_id, mix_id))`,
+  recipe_categories: `CREATE TABLE IF NOT EXISTS recipe_categories (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, color TEXT NOT NULL DEFAULT '#4f46e5', created_at TEXT NOT NULL,
+      updated_at INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0, origin TEXT NOT NULL DEFAULT '')`,
   recipe_main_liquids: `CREATE TABLE IF NOT EXISTS recipe_main_liquids (
       recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
       ingredient_id TEXT NOT NULL REFERENCES ingredients(id), percentage REAL NOT NULL,
       updated_at INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0, origin TEXT NOT NULL DEFAULT '',
       PRIMARY KEY (recipe_id, ingredient_id))`,
 };
+
+/** Tables whose own DDL must run before anything references them. */
+const DDL_ORDER: TableName[] = ["recipe_categories", "ingredients", "flour_mixes", "recipes", "flour_mix_components", "recipe_ingredients", "recipe_mixes", "recipe_main_liquids"];
 
 const tableInfo = (db: DatabaseSync, table: string): string[] =>
   (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((r) => r.name);
@@ -57,7 +64,8 @@ export function ensureSchema(db: DatabaseSync): void {
   db.exec("PRAGMA foreign_keys = ON;");
   db.exec("PRAGMA journal_mode = WAL;");
 
-  for (const [table, ddl] of Object.entries(DDL) as Array<[TableName, string]>) {
+  for (const table of DDL_ORDER) {
+    const ddl = DDL[table];
     const existing = tableInfo(db, table);
     if (existing.length === 0) { db.exec(ddl); continue; }
     for (const column of ["updated_at", "deleted", "origin"]) {
@@ -72,8 +80,78 @@ export function ensureSchema(db: DatabaseSync): void {
     db.exec(`UPDATE ${table} SET origin = 'legacy' WHERE origin IS NULL OR origin = ''`);
   }
 
-  // Legacy tables we do not model (categories) are left untouched on purpose.
+  // Recipe categories are replicated too (they exist in your original database).
   db.exec(`CREATE TABLE IF NOT EXISTS sync_meta (device_id TEXT PRIMARY KEY, cursor INTEGER NOT NULL DEFAULT 0)`);
+
+  pruneDanglingLinks(db);
+  enforceLinkTableKeys(db);
+}
+
+/**
+ * The link tables in the original database have no PRIMARY KEY / UNIQUE constraint
+ * (`flour_mix_components`, `recipe_ingredients`, `recipe_mixes`, `recipe_main_liquids`),
+ * which would let replication insert the same link over and over. Keep one row per key
+ * (last write wins) and add a unique index so upserts really replace. Additive only:
+ * no column is renamed or dropped, and this runs exclusively on our own copy.
+ */
+const LINK_TABLE_KEYS: Array<[TableName, string[]]> = [
+  ["flour_mix_components", ["mix_id", "ingredient_id"]],
+  ["recipe_ingredients", ["recipe_id", "ingredient_id"]],
+  ["recipe_mixes", ["recipe_id", "mix_id"]],
+  ["recipe_main_liquids", ["recipe_id", "ingredient_id"]],
+];
+
+const PARENT_KEYS: Record<string, Array<[string, string]>> = {
+  flour_mix_components: [["mix_id", "flour_mixes"], ["ingredient_id", "ingredients"]],
+  recipe_ingredients: [["recipe_id", "recipes"], ["ingredient_id", "ingredients"]],
+  recipe_mixes: [["recipe_id", "recipes"], ["mix_id", "flour_mixes"]],
+  recipe_main_liquids: [["recipe_id", "recipes"], ["ingredient_id", "ingredients"]],
+};
+
+/** Drop link rows pointing at a parent that no longer exists (leftovers from old deletes). */
+export function pruneDanglingLinks(db: DatabaseSync): number {
+  let removed = 0;
+  for (const [table, parents] of Object.entries(PARENT_KEYS)) {
+    for (const [column, parentTable] of parents) {
+      const rows = db.prepare(
+        `SELECT rowid AS _rowid FROM ${table} t WHERE t.${column} NOT IN (SELECT id FROM ${parentTable})`,
+      ).all() as Array<{ _rowid: number }>;
+      if (rows.length === 0) continue;
+      const del = db.prepare(`DELETE FROM ${table} WHERE rowid = ?`);
+      for (const row of rows) del.run(row._rowid);
+      removed += rows.length;
+      console.log(`[hub] pruned ${rows.length} dangling row(s) from ${table} (${column} has no ${parentTable})`);
+    }
+  }
+  return removed;
+}
+
+export function enforceLinkTableKeys(db: DatabaseSync): void {
+  for (const [table, keys] of LINK_TABLE_KEYS) {
+    const rows = db.prepare(`SELECT rowid AS _rowid, * FROM ${table}`).all() as Array<Record<string, unknown>>;
+    const winners = new Map<string, Record<string, unknown>>();
+
+    for (const row of rows) {
+      const key = keys.map((c) => String(row[c] ?? "")).join("::");
+      const incumbent = winners.get(key);
+      if (!incumbent || Number(row.updated_at ?? 0) > Number(incumbent.updated_at ?? 0)) winners.set(key, row);
+    }
+
+    const keepRowIds = new Set([...winners.values()].map((row) => Number(row._rowid)));
+    const remove = db.prepare(`DELETE FROM ${table} WHERE rowid = ?`);
+    let removed = 0;
+    for (const row of rows) {
+      if (!keepRowIds.has(Number(row._rowid))) { remove.run(Number(row._rowid)); removed += 1; }
+    }
+
+    try {
+      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uniq_${table}_key ON ${table} (${keys.join(", ")})`);
+    } catch (error) {
+      console.warn(`[hub] could not enforce unique key on ${table}: ${String((error as Error).message)}`);
+    }
+
+    if (removed > 0) console.log(`[hub] deduped ${removed} duplicate row(s) in ${table}; unique key (${keys.join(", ")}) now enforced`);
+  }
 }
 
 const toRecord = (table: TableName, row: Record<string, unknown>, fallbackMs: number, fallbackOrigin: string): RowRecord => {
@@ -117,7 +195,7 @@ export function applyChanges(db: DatabaseSync, records: readonly RowRecord[]): {
     if (existingRow) {
       const currentMs = Number(existingRow.updated_at ?? 0);
       const currentOrigin = String(existingRow.origin ?? "");
-      const newer = record.updated_at > currentMs || (record.updated_at === currentMs && record.origin >= currentOrigin);
+      const newer = record.updated_at > currentMs || (record.updated_at === currentMs && record.origin > currentOrigin);
       if (!newer) { rejected += 1; continue; }
     }
 
@@ -132,8 +210,21 @@ export function applyChanges(db: DatabaseSync, records: readonly RowRecord[]): {
       return String(raw);
     });
 
-    db.prepare(`INSERT OR REPLACE INTO ${record.table} (${columns.join(", ")}) VALUES (${placeholders})`).run(...values);
-    applied += 1;
+    const parents = PARENT_KEYS[record.table] ?? [];
+    const missingParent = parents.find(([column, parentTable]) => {
+      const value = String(record.cols[column] ?? "");
+      const found = db.prepare(`SELECT 1 AS ok FROM ${parentTable} WHERE id = ?`).get(value) as { ok?: number } | undefined;
+      return !found;
+    });
+    if (missingParent) { rejected += 1; console.warn(`[hub] skipped ${record.table} ${record.pk}: ${missingParent[0]} has no ${missingParent[1]}`); continue; }
+
+    try {
+      db.prepare(`INSERT OR REPLACE INTO ${record.table} (${columns.join(", ")}) VALUES (${placeholders})`).run(...values);
+      applied += 1;
+    } catch (error) {
+      console.error(`[hub] failed to apply ${record.table} ${record.pk}:`, String((error as Error).message), JSON.stringify(values));
+      throw error;
+    }
   }
 
   return { applied, rejected };

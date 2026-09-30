@@ -151,3 +151,8 @@ textarea { min-height: 6rem; resize: vertical; }
 }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+
+/* Recipe categories (colour comes from your original database) */
+.chip { display: inline-flex; align-items: center; gap: .4rem; padding: .1rem .5rem; border: 1px solid var(--line); border-radius: 999px; font-size: .82rem; }
+.chip-dot { width: .6rem; height: .6rem; border-radius: 50%; display: inline-block; }

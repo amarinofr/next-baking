@@ -2,8 +2,8 @@
 
 import { buildRecipeView, type RecipeMathInput } from "../../domain/calc.ts";
 import { recipeMathInput } from "../../domain/state.ts";
-import { askConfirm, clear, el, euro, grams, num, pct, runUi, toast } from "../dom.ts";
-import type { ViewCtx } from "./context.ts";
+import { askConfirm, clear, el, euro, grams, num, pct, runAction, runUi, toast } from "../dom.ts";
+import { categoryChip, type ViewCtx } from "./context.ts";
 
 export function renderRecipeDetail(ctx: ViewCtx, mountPoint: HTMLElement, id: string): void {
   const recipe = ctx.state.recipes.get(id);
@@ -21,7 +21,9 @@ export function renderRecipeDetail(ctx: ViewCtx, mountPoint: HTMLElement, id: st
     const view = buildRecipeView(input, target);
 
     clear(body);
+    const chip = categoryChip(ctx.state, recipe.category_id);
     body.append(
+      ...(chip ? [el("p", { class: "small muted" }, "Category: ", chip)] : []),
       el("section", { class: "panel inline-fields" },
         el("div", { class: "field" }, el("label", { for: "scale" }, `Servings (recipe makes ${recipe.servings})`), scaleInput),
         el("p", { class: "small muted nowrap" }, `scaling ×${num(view.scale, 2)} · nothing is written to the database`),
@@ -97,7 +99,7 @@ export function renderRecipeDetail(ctx: ViewCtx, mountPoint: HTMLElement, id: st
   const deleteButton = el("button", { class: "danger small" }, "Delete recipe");
   deleteButton.addEventListener("click", () => {
     if (!askConfirm(`Delete recipe "${recipe.name}"?`)) return;
-    runUi(ctx.app.repo.deleteRecipe(id)).then((ok) => { if (ok !== undefined) ctx.navigate("/recipes"); });
+    runAction(ctx.app.repo.deleteRecipe(id)).then((done) => { if (done) ctx.navigate("/recipes"); });
   });
 
   clear(mountPoint);

@@ -50,6 +50,18 @@ export const setStatus = (left: string, right?: string): void => {
 };
 
 /** Run an Effect program and surface failures as toasts instead of exceptions. */
+/** Like runUi, but reports whether the action succeeded (a void success is still a success). */
+export const runAction = async <A, E>(program: import("effect").Effect.Effect<A, E, never>): Promise<boolean> => {
+  const { Effect } = await import("effect");
+  const result = await Effect.runPromise(Effect.either(program));
+  if (result._tag === "Left") {
+    const error = result.left as { _tag?: string; reason?: string; cause?: string; message?: string };
+    toast(error.reason ?? error.cause ?? error.message ?? error._tag ?? "something went wrong", "err");
+    return false;
+  }
+  return true;
+};
+
 export const runUi = async <A, E>(program: import("effect").Effect.Effect<A, E, never>): Promise<A | undefined> => {
   const { Effect } = await import("effect");
   const result = await Effect.runPromise(Effect.either(program));

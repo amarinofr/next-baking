@@ -4,7 +4,7 @@ import { mixCostPerKg, mixNutritionPer100g } from "../../domain/calc.ts";
 import { componentsOf } from "../../domain/state.ts";
 import type { AppState } from "../../domain/state.ts";
 import type { Ingredient } from "../../domain/schema.ts";
-import { askConfirm, clear, el, euro, grams, num, runUi, toast } from "../dom.ts";
+import { askConfirm, clear, el, euro, grams, num, runAction, runUi, toast } from "../dom.ts";
 import { ingredientInputFromForm, mixInputFromForm } from "../app.ts";
 import type { ViewCtx } from "./context.ts";
 
@@ -42,7 +42,7 @@ export function renderIngredientForm(ctx: ViewCtx, mountPoint: HTMLElement, edit
     ),
   );
 
-  const waterField = number("water_percent", "Water content (%)", ing.category === "hybrid" ? (ing.hybrid_water ?? 0) * 100 : 0, { min: 0, max: 100 });
+  const waterField = number("water_percent", "Water content (%)", ing.category === "hybrid" ? (ing.hybrid_water ?? 0) * 100 : 0);
   waterField.style.display = ing.category === "hybrid" ? "" : "none";
   form.append(waterField);
 
@@ -76,7 +76,7 @@ export function renderIngredientForm(ctx: ViewCtx, mountPoint: HTMLElement, edit
     const deleteButton = el("button", { class: "danger", type: "button" }, `Delete "${existing.name}"`);
     deleteButton.addEventListener("click", () => {
       if (!askConfirm(`Delete "${existing.name}"? Mixes and recipes using it will lose those rows.`)) return;
-      runUi(ctx.app.repo.deleteIngredient(existing.id)).then((ok) => { if (ok !== undefined) ctx.navigate("/ingredients"); });
+      runAction(ctx.app.repo.deleteIngredient(existing.id)).then((done) => { if (done) ctx.navigate("/ingredients"); });
     });
     mountPoint.append(el("section", { class: "panel" }, deleteButton));
   }
@@ -104,7 +104,7 @@ export function renderMixForm(ctx: ViewCtx, mountPoint: HTMLElement, editingId?:
   const makeRow = (ingredientId = "", amount: number | string = ""): HTMLElement => {
     const row = el("div", { class: "row" },
       select2("ingredient_id", options, ingredientId),
-      el("input", { name: "amount", type: "number", step: "any", min: "0", placeholder: "g", value: String(amount) }),
+      el("input", { name: "amount", type: "number", step: "any", placeholder: "g", value: String(amount) }),
       el("span", { class: "row-preview muted" }, ""),
     );
     const remove = el("button", { class: "ghost small", type: "button" }, "remove");
@@ -188,7 +188,7 @@ export function renderMixForm(ctx: ViewCtx, mountPoint: HTMLElement, editingId?:
     const deleteButton = el("button", { class: "danger", type: "button" }, `Delete "${mix.name}"`);
     deleteButton.addEventListener("click", () => {
       if (!askConfirm(`Delete mix "${mix.name}"? Recipes using it will lose that mix.`)) return;
-      runUi(ctx.app.repo.deleteMix(mix.id)).then((ok) => { if (ok !== undefined) ctx.navigate("/mixes"); });
+      runAction(ctx.app.repo.deleteMix(mix.id)).then((done) => { if (done) ctx.navigate("/mixes"); });
     });
     mountPoint.append(el("section", { class: "panel" }, deleteButton));
   }

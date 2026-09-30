@@ -4,7 +4,7 @@ import { Effect, Schema } from "effect";
 import type { IngredientUse, MainLiquidRef, MixUse, RecipeMathInput } from "./calc.ts";
 import { ROW_SCHEMAS, ValidationError } from "./schema.ts";
 import type {
-  FlourMix, FlourMixComponent, Ingredient, Recipe, RecipeIngredientLink, RecipeMainLiquidLink, RecipeMixLink,
+  FlourMix, FlourMixComponent, Ingredient, Recipe, RecipeCategory, RecipeIngredientLink, RecipeMainLiquidLink, RecipeMixLink,
 } from "./schema.ts";
 import { TABLE_NAMES, fromRecord, type RowRecord, type TableName } from "./types.ts";
 
@@ -16,6 +16,7 @@ export interface AppState {
   readonly recipeIngredients: ReadonlyArray<RecipeIngredientLink>;
   readonly recipeMixes: ReadonlyArray<RecipeMixLink>;
   readonly mainLiquids: ReadonlyArray<RecipeMainLiquidLink>;
+  readonly categories: ReadonlyMap<string, RecipeCategory>;
   /** rows that failed schema decoding (surfaced as a warning instead of crashing) */
   readonly invalidRows: number;
 }
@@ -24,6 +25,7 @@ const BUCKETS: Record<TableName, string> = {
   ingredients: "ingredients", flour_mixes: "mixes", recipes: "recipes",
   flour_mix_components: "mixComponents", recipe_ingredients: "recipeIngredients",
   recipe_mixes: "recipeMixes", recipe_main_liquids: "mainLiquids",
+  recipe_categories: "categories",
 };
 
 export function buildState(records: Iterable<RowRecord>): Effect.Effect<AppState, ValidationError> {
@@ -35,6 +37,7 @@ export function buildState(records: Iterable<RowRecord>): Effect.Effect<AppState
     const recipeIngredients: RecipeIngredientLink[] = [];
     const recipeMixes: RecipeMixLink[] = [];
     const mainLiquids: RecipeMainLiquidLink[] = [];
+    const categories = new Map<string, RecipeCategory>();
     let invalid = 0;
 
     for (const record of records) {
@@ -52,11 +55,12 @@ export function buildState(records: Iterable<RowRecord>): Effect.Effect<AppState
         case "mixComponents": mixComponents.push(decoded as unknown as FlourMixComponent); break;
         case "recipeIngredients": recipeIngredients.push(decoded as unknown as RecipeIngredientLink); break;
         case "recipeMixes": recipeMixes.push(decoded as unknown as RecipeMixLink); break;
-        default: mainLiquids.push(decoded as unknown as RecipeMainLiquidLink); break;
+        case "mainLiquids": mainLiquids.push(decoded as unknown as RecipeMainLiquidLink); break;
+        default: categories.set(String(decoded.id), decoded as unknown as RecipeCategory); break;
       }
     }
 
-    return { ingredients, mixes, mixComponents, recipes, recipeIngredients, recipeMixes, mainLiquids, invalidRows: invalid } satisfies AppState;
+    return { ingredients, mixes, mixComponents, recipes, recipeIngredients, recipeMixes, mainLiquids, categories, invalidRows: invalid } satisfies AppState;
   });
 }
 

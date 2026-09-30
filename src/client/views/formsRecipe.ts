@@ -2,9 +2,10 @@
 
 import { buildRecipeView, type IngredientUse, type MixUse, type RecipeMathInput } from "../../domain/calc.ts";
 import { componentsOf, recipeMathInput } from "../../domain/state.ts";
-import { askConfirm, clear, el, euro, grams, num, pct, runUi, toast } from "../dom.ts";
+import type { Recipe } from "../../domain/schema.ts";
+import { askConfirm, clear, el, euro, grams, num, pct, runAction, runUi, toast } from "../dom.ts";
 import { recipeInputFromForm } from "../app.ts";
-import type { ViewCtx } from "./context.ts";
+import { type ViewCtx } from "./context.ts";
 
 const text = (name: string, label: string, value = ""): HTMLElement =>
   el("div", { class: "field" }, el("label", { for: name }, label), el("input", { id: name, name, type: "text", value }));
@@ -14,6 +15,19 @@ const number = (name: string, label: string, value: number | string, opts: Recor
 
 const picker = (name: string, options: Array<[string, string]>, selected?: string): HTMLElement =>
   el("select", { name }, ...options.map(([value, label]) => el("option", { value, selected: selected === value ? "selected" : undefined }, label)));
+
+/** Category picker. If this device has no categories yet we keep the stored value untouched. */
+function categoryField(ctx: ViewCtx, recipe?: Recipe): HTMLElement {
+  const stored = recipe?.category_id ?? "";
+  const options = [...ctx.state.categories.values()].sort((a, b) => a.name.localeCompare(b.name));
+  if (options.length === 0) return el("input", { type: "hidden", name: "category_id", value: stored });
+
+  const select = el("select", { name: "category_id" }) as HTMLSelectElement;
+  select.append(el("option", { value: "" }, "— no category —"));
+  for (const category of options) select.append(el("option", { value: category.id }, category.name));
+  select.value = options.some((c) => c.id === stored) ? stored : "";
+  return el("div", { class: "field" }, el("label", {}, "Category"), select);
+}
 
 export function renderRecipeForm(ctx: ViewCtx, mountPoint: HTMLElement, editingId?: string): void {
   const state = ctx.state;
@@ -37,7 +51,7 @@ export function renderRecipeForm(ctx: ViewCtx, mountPoint: HTMLElement, editingI
   const rowsOf = (nameKey: string, amountKey: string, options: Array<[string, string]>, existing: Array<{ idOrMix: string; amount: number }> = []): HTMLElement => {
     const wrap = el("div", { class: "rows" });
     const addRow = (selectValue = "", amount: number | string = ""): HTMLElement => {
-      const row = el("div", { class: "row" }, picker(nameKey, options, selectValue), el("input", { name: amountKey, type: "number", step: "any", min: "0", placeholder: "g", value: String(amount) }));
+      const row = el("div", { class: "row" }, picker(nameKey, options, selectValue), el("input", { name: amountKey, type: "number", step: "any", placeholder: "g", value: String(amount) }));
       const remove = el("button", { class: "ghost small", type: "button" }, "remove");
       remove.addEventListener("click", () => { row.remove(); recompute(); });
       row.append(remove);
@@ -59,8 +73,9 @@ export function renderRecipeForm(ctx: ViewCtx, mountPoint: HTMLElement, editingI
     editingId ? el("input", { type: "hidden", name: "id", value: editingId }) : "",
     el("div", { class: "inline-fields" },
       text("name", "Recipe name", recipe?.name ?? ""),
-      number("servings", "Servings", recipe?.servings ?? 1, { min: "1" }),
+      number("servings", "Servings", recipe?.servings ?? 1),
       number("hydration_percent", "Hydration %", recipe?.hydration_percent ?? 65),
+      categoryField(ctx, recipe),
     ),
     el("div", { class: "field" }, el("label", { for: "instructions" }, "Instructions"), el("textarea", { id: "instructions", name: "instructions" }, recipe?.instructions ?? "")),
   );
@@ -73,7 +88,7 @@ export function renderRecipeForm(ctx: ViewCtx, mountPoint: HTMLElement, editingI
   };
 
   function addInto(rows: HTMLElement, nameKey: string, amountKey: string, options: Array<[string, string]>): void {
-    const row = el("div", { class: "row" }, picker(nameKey, options), el("input", { name: amountKey, type: "number", step: "any", min: "0", placeholder: "g" }));
+    const row = el("div", { class: "row" }, picker(nameKey, options), el("input", { name: amountKey, type: "number", step: "any", placeholder: "g" }));
     const remove = el("button", { class: "ghost small", type: "button" }, "remove");
     remove.addEventListener("click", () => { row.remove(); recompute(); });
     row.append(remove);
@@ -93,7 +108,7 @@ export function renderRecipeForm(ctx: ViewCtx, mountPoint: HTMLElement, editingI
   form.append(mixSection, drySection, wetSection, mainLiquidSection);
 
   // percentages belong to the "percentage" column, not grams — relabel those inputs
-  mainLiquidSection.querySelectorAll<HTMLInputElement>("input").forEach((input) => { input.placeholder = "%"; input.max = "100"; });
+  mainLiquidSection.querySelectorAll<HTMLInputElement>("input").forEach((input) => { input.placeholder = "%"; });
 
   form.append(el("hr", { class: "sep" }), el("h3", {}, "Live breakdown"), panel,
     el("div", { class: "right" }, el("button", { class: "primary", type: "submit" }, recipe ? "Save changes" : "Create recipe")));
@@ -184,7 +199,7 @@ export function renderRecipeForm(ctx: ViewCtx, mountPoint: HTMLElement, editingI
     const deleteButton = el("button", { class: "danger", type: "button" }, `Delete "${recipe.name}"`);
     deleteButton.addEventListener("click", () => {
       if (!askConfirm(`Delete recipe "${recipe.name}"?`)) return;
-      runUi(ctx.app.repo.deleteRecipe(recipe.id)).then((ok) => { if (ok !== undefined) ctx.navigate("/recipes"); });
+      runAction(ctx.app.repo.deleteRecipe(recipe.id)).then((done) => { if (done) ctx.navigate("/recipes"); });
     });
     mountPoint.append(el("section", { class: "panel" }, deleteButton));
   }

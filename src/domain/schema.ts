@@ -33,6 +33,7 @@ export const IngredientSchema = Schema.Struct({
   unit: Schema.String,
   created_at: Schema.String,
   price: Schema.Number, // € per 1000 g
+  price_unit: Schema.optional(Schema.NullOr(Schema.String)), // legacy column, carried through untouched
   category: Schema.Literal("dry", "hybrid", "liquid"),
   calories: Schema.Number, // per 100 g
   protein: Schema.Number,
@@ -62,8 +63,17 @@ export const RecipeSchema = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
   instructions: Schema.String,
+  category_id: Schema.optional(Schema.NullOr(Schema.String)), // FK -> recipe_categories.id
   servings: Schema.Int.pipe(Schema.positive()),
   hydration_percent: Schema.Number.pipe(Schema.between(0, 300)),
+  created_at: Schema.String,
+  ...syncColumns,
+});
+
+export const RecipeCategorySchema = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  color: Schema.String,
   created_at: Schema.String,
   ...syncColumns,
 });
@@ -99,6 +109,7 @@ export const ROW_SCHEMAS = {
   recipe_ingredients: RecipeIngredientLinkSchema,
   recipe_mixes: RecipeMixLinkSchema,
   recipe_main_liquids: RecipeMainLiquidLinkSchema,
+  recipe_categories: RecipeCategorySchema,
 } as const;
 
 // --- Form input DTOs ---
@@ -132,6 +143,7 @@ export const RecipeInputSchema = Schema.Struct({
   id: Schema.optional(Schema.String),
   name: Schema.String.pipe(Schema.nonEmptyString()),
   instructions: Schema.String,
+  category_id: Schema.optional(Schema.NullOr(Schema.String)), // FK -> recipe_categories.id
   servings: Schema.Int.pipe(Schema.positive()),
   hydration_percent: Schema.Number.pipe(Schema.between(0, 300)),
   ingredients: Schema.Array(
@@ -144,6 +156,8 @@ export const RecipeInputSchema = Schema.Struct({
     Schema.Struct({ ingredient_id: Schema.String, percentage: Schema.Number }),
   ),
 });
+
+export type RecipeCategory = typeof RecipeCategorySchema.Type;
 
 export type IngredientInput = typeof IngredientInputSchema.Type;
 export type MixInput = typeof MixInputSchema.Type;

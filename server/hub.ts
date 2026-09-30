@@ -142,6 +142,8 @@ const server = createServer(async (req, res) => {
 
     serveStatic(req, res);
   } catch (error) {
+    const message = String((error as Error)?.stack ?? error);
+    console.error("[hub] request failed:", message.split("\n").slice(0, 4).join(" | "));
     sendJson(res, 500, { error: String((error as Error)?.message ?? error) });
   }
 });

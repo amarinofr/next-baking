@@ -40,16 +40,21 @@ Taken with SQLite's online backup API (WAL folded in, integrity-checked):
 
 | Snapshot | sha256 prefix |
 |---|---|
-| `snapshots/baking-data.20260930-170644.db` (live DB of your running app) | `57f882e8dbce54dc…` |
-| `snapshots/baking-backend-data.20260930-170644.db` | `8d358237a30aae0d…` |
-| `snapshots/data.20260930-170644.db` | `fb66e85af206b8d9…` |
+| `baking-backend-data-app-db.2026-09-30-17-54.db` | `8d358237a30aae0d`…
+| `baking-backend-data.20260930-170644.db` | `8d358237a30aae0d`…
+| `baking-data-app-db.2026-09-30-17-54.db` | `57f882e8dbce54dc`…
+| `baking-data.20260930-170644.db` | `57f882e8dbce54dc`…
+| `data-app-db.2026-09-30-17-54.db` | `fb66e85af206b8d9`…
+| `data.20260930-170644.db` | `fb66e85af206b8d9`…
 
-Row counts verified identical between the original live DB and this project's working copy:
+Row-count and content equality is checked by a script, not by eye — it compares every row of
+`data/app.db` against the newest snapshot and fails loudly if anything is missing or altered:
 
+```bash
+npm run verify:data
 ```
-ingredients 26 · flour_mixes 6 · flour_mix_components 26 · recipes 7
-recipe_ingredients 54 · recipe_main_liquids 7 · recipe_mixes 7
-```
+
+Latest result: `ingredients 26 · flour_mixes 6 · flour_mix_components 26 · recipes 7 · recipe_ingredients 54 · recipe_mixes 7 · recipe_main_liquids 6 (+1 dangling row in the original, skipped on purpose) · recipe_categories 3`.
 
 Make more at any time (read-only on sources):
 
@@ -95,3 +100,25 @@ LEFT JOIN recipes r ON r.id = ml.recipe_id WHERE r.id IS NULL;
 ```
 
 Both apps ignore it (their queries join on existing recipes), and `npm run export:legacy` skips such rows explicitly instead of failing. If you ever want it gone, delete it from whichever database you decide is authoritative — deliberately not done here without you asking.
+
+---
+
+## 6. Fixes made while building — all of them local to this project
+
+Nothing below touched `../baking/**`; each change was applied to this app's own copy (`data/app.db`) or its code.
+
+| Problem found | What was done here |
+|---|---|
+| The legacy link tables have no primary key or unique index, so replication inserted the same link over and over | one row per composite key (last write wins) + `UNIQUE` index added when the hub starts (`enforceLinkTableKeys`) |
+| One pre-existing dangling `recipe_main_liquids` row made sync fail with `FOREIGN KEY constraint failed` on every device | the orphan row was pruned **from this project's copy only**, and the hub now skips any incoming child row whose parent does not exist instead of erroring |
+| A background pull could resurrect a row that had just been edited or deleted locally (equal timestamp + same device counted as "win") | last-write-wins is now strict: an identical version is never re-applied, and remote rows are merged inside a single IndexedDB transaction (`store.mergeRemote`) — covered by a unit test |
+| `price_unit` (ingredients) and `category_id` / `recipe_categories` existed in your database but not in the new model, so saving a row blanked them | both columns are modelled, replicated, preserved on edit, and shown/edited in the UI — covered by a unit test |
+| Deletes removed the row from storage but the list kept showing it (a `void` success looked like a failure) | view actions now use a success-aware runner and refresh + confirm with a message |
+| A background sync could re-render a page under a half-filled form and lose what you typed | form values are captured before every re-render and restored after it; on form pages an incoming update is announced instead of applied to the DOM |
+
+Re-verify originals at any time:
+
+```bash
+cd ~/projects/apps && sha256sum baking/data/app.db baking/backend/data/app.db data/app.db
+# 205f629be77ca910…  75eef7379cdd9e51…  f1c1d714b195aa17…   (unchanged since the first snapshot)
+```

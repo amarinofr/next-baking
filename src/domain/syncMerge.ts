@@ -5,11 +5,16 @@ import { PK_SEPARATOR, TABLES, type RowRecord, type TableName } from "./types.ts
 /** Composite identity of a row across all devices. */
 export const recordKey = (table: TableName, pk: string): string => `${table}${PK_SEPARATOR}${pk}`;
 
-/** Deterministic total order: timestamp first, device id as tiebreak. */
+/**
+ * Last-write-wins order. Timestamp first, device id as the tiebreak for genuine
+ * concurrent edits. Two records with the SAME timestamp AND the same origin are the
+ * same edit echoed back — they must NOT overwrite local work, otherwise a pull that
+ * started before a local edit can resurrect the pre-edit version.
+ */
 export function wins(candidate: RowRecord, incumbent: RowRecord): boolean {
   if (candidate.updated_at !== incumbent.updated_at) return candidate.updated_at > incumbent.updated_at;
   if (candidate.origin !== incumbent.origin) return candidate.origin > incumbent.origin;
-  return candidate.pk >= incumbent.pk;
+  return false;
 }
 
 export interface MergeResult {

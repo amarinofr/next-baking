@@ -8,7 +8,7 @@
 
 import { Effect } from "effect";
 import { StorageError } from "../domain/schema.ts";
-import { recordKey } from "../domain/syncMerge.ts";
+import { recordKey, wins } from "../domain/syncMerge.ts";
 import type { RowRecord } from "../domain/types.ts";
 
 export interface Store {
@@ -17,6 +17,8 @@ export interface Store {
   readonly getMeta: (key: string) => Effect.Effect<string | undefined, StorageError>;
   readonly setMeta: (key: string, value: string) => Effect.Effect<void, StorageError>;
   readonly replaceAll: (records: readonly RowRecord[]) => Effect.Effect<void, StorageError>;
+  /** Apply remote rows inside one transaction, keeping locally-newer versions. Returns how many were applied. */
+  readonly mergeRemote: (records: readonly RowRecord[]) => Effect.Effect<number, StorageError>;
 }
 
 const DB_NAME = "next-baking-app";
@@ -87,6 +89,31 @@ export const makeIdbStore = (): Effect.Effect<Store, StorageError> =>
       catch: asStorageError,
     });
 
+    // Read + compare + write in ONE transaction: no window where a concurrent local
+    // edit could be overwritten by a stale copy arriving from the hub.
+    const mergeRemote = (incoming: readonly RowRecord[]) => Effect.tryPromise({
+      try: async () => {
+        const tx = db.transaction(RECORDS, "readwrite");
+        const store = tx.objectStore(RECORDS);
+        const live = await reqToPromise(store.getAll() as IDBRequest<StoredRecord[]>);
+        const byKey = new Map(live.map((row) => [row.key, row]));
+        let applied = 0;
+        for (const record of incoming) {
+          const key = recordKey(record.table, record.pk);
+          const incumbent = byKey.get(key);
+          if (incumbent) {
+            const liveRow: RowRecord = { table: incumbent.table, pk: incumbent.pk, cols: incumbent.cols, updated_at: incumbent.updated_at, deleted: incumbent.deleted, origin: incumbent.origin };
+            if (!wins(record, liveRow)) continue;
+          }
+          store.put({ ...record, key } satisfies StoredRecord);
+          applied += 1;
+        }
+        await txDone(tx);
+        return applied;
+      },
+      catch: asStorageError,
+    });
+
     const getMeta = (key: string) => Effect.tryPromise({
       try: async () => {
         const tx = db.transaction(META, "readonly");
@@ -105,7 +132,7 @@ export const makeIdbStore = (): Effect.Effect<Store, StorageError> =>
       catch: asStorageError,
     });
 
-    return { allRecords, putRecords, replaceAll, getMeta, setMeta } satisfies Store;
+    return { allRecords, putRecords, replaceAll, mergeRemote, getMeta, setMeta } satisfies Store;
   });
 
 /** In-memory store used by tests and by the hub when importing a seed file. */
@@ -121,6 +148,16 @@ export const makeMemoryStore = (initial: readonly RowRecord[] = []): Store & { s
     allRecords: () => Effect.succeed(snapshot()),
     putRecords: (rows) => Effect.sync(() => { for (const r of rows) records.set(recordKey(r.table, r.pk), r); }),
     replaceAll: (rows) => Effect.sync(() => { records.clear(); for (const r of rows) records.set(recordKey(r.table, r.pk), r); }),
+    mergeRemote: (rows) => Effect.sync(() => {
+      let applied = 0;
+      for (const r of rows) {
+        const incumbent = records.get(recordKey(r.table, r.pk));
+        if (incumbent && !wins(r, incumbent)) continue;
+        records.set(recordKey(r.table, r.pk), r);
+        applied += 1;
+      }
+      return applied;
+    }),
     getMeta: (key) => Effect.sync(() => meta.get(key)),
     setMeta: (key, value) => Effect.sync(() => { meta.set(key, value); }),
   };

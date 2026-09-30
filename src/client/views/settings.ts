@@ -17,22 +17,26 @@ const download = (filename: string, content: string): void => {
   URL.revokeObjectURL(url);
 };
 
+/** Kept outside the render so the result survives the view re-render after a refresh. */
+let lastSyncSummary = "";
+
 export function renderSettings(ctx: ViewCtx, mountPoint: HTMLElement): void {
   const state = ctx.state;
   const totalRows = state.ingredients.size + state.mixes.size + state.recipes.size + state.mixComponents.length + state.recipeIngredients.length + state.recipeMixes.length + state.mainLiquids.length;
 
   const hubInput = el("input", { type: "text", spellcheck: "false" }) as HTMLInputElement;
-  const statusLine = el("p", { class: "small muted" }, "");
+  const statusLine = el("p", { class: "small muted" }, lastSyncSummary);
 
   const deviceId = ctx.app.deviceId;
 
-  const syncButton = el("button", { class: "primary", type: "button" }, "Sync now");
+  const syncButton = el("button", { id: "sync-now", class: "primary", type: "button" }, "Sync now");
   syncButton.addEventListener("click", async () => {
     syncButton.disabled = true;
     const outcome = await runUi(syncNow(ctx.app.store, deviceId));
     syncButton.disabled = false;
     if (!outcome) return;
-    statusLine.textContent = `pushed ${outcome.pushed} row(s), applied ${outcome.applied} row(s) from ${outcome.hubUrl}`;
+    lastSyncSummary = `pushed ${outcome.pushed} row(s), applied ${outcome.applied} row(s) from hub`;
+    statusLine.textContent = lastSyncSummary;
     toast(`Synced with hub (${outcome.applied} incoming).`);
     void ctx.refresh();
   });

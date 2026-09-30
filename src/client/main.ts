@@ -4,7 +4,7 @@ import { Effect } from "effect";
 import { boot, reloadState, type AppHandle } from "./app.ts";
 import type { AppState } from "../domain/state.ts";
 import { setStatus, toast } from "./dom.ts";
-import { syncNow } from "./syncClient.ts";
+import { pendingCount, syncNow } from "./syncClient.ts";
 import type { ViewCtx } from "./views/context.ts";
 import { renderIngredients, renderMixes, renderRecipesGrid, renderRecipesTable } from "./views/lists.ts";
 import { renderIngredientForm, renderMixForm } from "./views/formsIngredientMix.ts";
@@ -52,9 +52,43 @@ export async function startApp(): Promise<void> {
 
   let state: AppState = app.state;
 
+  // A background sync (or a save) can re-render the page while you are still typing.
+  // Form values are therefore captured before every re-render and restored afterwards,
+  // so nothing you typed is ever thrown away.
+  const drafts = new Map<string, Record<string, string>>();
+  const draftKey = (which: PageId, whichId?: string): string => `${which}${whichId ? `::${whichId}` : ""}`;
+  const fieldNodes = () => [...document.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>("#app form [name]")];
+
+  const captureDraft = (): void => {
+    if (fieldNodes().length === 0) return;
+    const values: Record<string, string> = {};
+    for (const node of fieldNodes()) { const name = node.getAttribute("name"); if (name) values[name] = node.value; }
+    drafts.set(draftKey(page, id), values);
+  };
+
+  const restoreDraft = (): void => {
+    const values = drafts.get(draftKey(page, id));
+    if (!values) return;
+    for (const node of fieldNodes()) {
+      const name = node.getAttribute("name");
+      if (!name || !(name in values)) continue;
+      if (node.value === values[name]) continue;
+      node.value = values[name]!;
+      node.dispatchEvent(new Event("input", { bubbles: true })); // lets conditional fields (water %, …) catch up
+      node.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  };
+
   const draw = (): void => {
-    const ctx: ViewCtx = { app, state, refresh, navigate: (path: string) => window.location.assign(path) };
+    captureDraft();
+    const ctx: ViewCtx = {
+      app,
+      state,
+      refresh,
+      navigate: (path: string) => { drafts.delete(draftKey(page, id)); window.location.assign(path); },
+    };
     renderPage(ctx, mountPoint!, page, id);
+    restoreDraft();
   };
 
   async function refresh(): Promise<void> {
@@ -81,8 +115,14 @@ export async function startApp(): Promise<void> {
   if (navigator.onLine) {
     try {
       const outcome = await Effect.runPromise(syncNow(app.store, app.deviceId));
-      if (outcome.applied > 0 || outcome.pushed > 0) await refresh();
-      if (outcome.applied > 0) toast(`Updated from hub: ${outcome.applied} row(s).`);
+      const fillingInForm = page === "ingredient-form" || page === "mix-form" || page === "recipe-form";
+      if (outcome.applied > 0 && fillingInForm) {
+        // Never re-render under someone's half-filled form: tell them instead.
+        toast(`${outcome.applied} row(s) changed elsewhere — reload to see them.`, "warn");
+      } else if (outcome.applied > 0 || outcome.pushed > 0) {
+        await refresh();
+        if (outcome.applied > 0) toast(`Updated from hub: ${outcome.applied} row(s).`);
+      }
     } catch {
       setStatus(`${app.deviceId} · working locally`, "hub not reachable — changes stay queued");
     }
@@ -90,4 +130,25 @@ export async function startApp(): Promise<void> {
 
   window.addEventListener("online", () => { void refresh(); });
   window.addEventListener("offline", () => { updateStatus(); });
+
+  // Small read-only diagnostic handle: handy when something looks wrong on a device.
+  // Open the browser console and try __baking.debug() or __baking.find("Butter").
+  (window as unknown as Record<string, unknown>).__baking = {
+    deviceId: app.deviceId,
+    debug: async () => {
+      const rows = await Effect.runPromise(app.store.allRecords());
+      return {
+        totalRows: rows.length,
+        deleted: rows.filter((row) => row.deleted).length,
+        pendingSync: await Effect.runPromise(pendingCount(app.store)),
+        tables: [...new Set(rows.map((row) => row.table))].sort(),
+      };
+    },
+    find: async (needle: string) => {
+      const rows = await Effect.runPromise(app.store.allRecords());
+      return rows
+        .filter((row) => JSON.stringify(row.cols).includes(needle))
+        .map((row) => ({ table: row.table, pk: row.pk, deleted: row.deleted, updated_at: row.updated_at }));
+    },
+  };
 }

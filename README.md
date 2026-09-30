@@ -60,6 +60,7 @@ Run `./run.sh` on whichever machine you want as the hub; every other device just
 | `npm run e2e` | drives real Chromium: seeded data loads, recipe maths renders, scaler works, create/edit survives reload, second device receives it via the hub, offline render still works |
 | `npm run snapshot` | **read-only** hot backup of every SQLite file found in the original app into `snapshots/` |
 | `npm run snapshot -- --refresh` | additionally refresh this app's working copy (`data/app.db`) from the old app's live DB |
+| `npm run verify:data` | compare `data/app.db` row-by-row against the newest snapshot of your original database (fails if anything is missing or changed) |
 | `npm run export:legacy` | write this app's data back out as a plain SQLite file using the **original** schema (`exports/legacy-compat-*.db`) — the rollback path |
 
 ---
@@ -76,7 +77,7 @@ Run `./run.sh` on whichever machine you want as the hub; every other device just
 
 ### Schema compatibility
 
-Table and column names match the legacy app exactly (`ingredients`, `flour_mixes`, `flour_mix_components`, `recipes`, `recipe_ingredients`, `recipe_mixes`, `recipe_main_liquids`). Only additive columns were introduced; the migration never drops or renames anything. `npm run export:legacy` produces a file with the *old* shape (replication columns stripped, tombstoned rows omitted) so you can hand the data back to the Go app if you ever want to.
+Table and column names match the legacy app exactly (`ingredients` incl. `price_unit`, `flour_mixes`, `flour_mix_components`, `recipes` incl. `category_id`, `recipe_categories`, `recipe_ingredients`, `recipe_mixes`, `recipe_main_liquids`). Only additive columns were introduced (`updated_at`, `deleted`, `origin`); the migration never drops, renames or reparses anything, and `npm run verify:data` proves row-for-row equality with the snapshot of your live database. `npm run export:legacy` produces a file with the *old* shape (replication columns stripped, tombstoned rows omitted) so you can hand the data back to the Go app if you ever want to.
 
 ---
 
@@ -105,7 +106,7 @@ Duplicate naming keeps the `(N)` scheme but is collision-safe and no longer stac
 
 ## Sync model, in one paragraph
 
-Each device stores every row as `{table, pk, cols, updated_at, deleted, origin}`. A sync round-trip pushes local rows newer than the device's cursor and pulls everything the hub changed since that cursor; both sides keep the row with the greater `(updated_at, origin)`, so merges are deterministic and converge no matter which device talks first. Deletes are tombstones (`deleted = true`) and replicate like any other write. Offline edits are simply rows whose `updated_at` is beyond the cursor — they wait in the outbox until a hub is reachable.
+Each device stores every row as `{table, pk, cols, updated_at, deleted, origin}`. A sync round-trip pushes local rows newer than the device's cursor and pulls everything the hub changed since that cursor; both sides keep the row with the greater `(updated_at, origin)` — and an *identical* version is never re-applied, so a slow pull can never resurrect something you just edited or deleted. Merges happen inside one storage transaction, so they are deterministic and converge no matter which device talks first. Deletes are tombstones (`deleted = true`) and replicate like any other write. Offline edits are simply rows whose `updated_at` is beyond the cursor — they wait in the outbox until a hub is reachable.
 
 ---
 
@@ -113,6 +114,20 @@ Each device stores every row as `{table, pk, cols, updated_at, deleted, origin}`
 
 - Cross-device convergence needs at least one reachable hub at some point; two devices that never see each other (or a shared hub) will not merge.
 - Last-write-wins is per **row**, not per field: if you edit the same recipe on two phones before either syncs, one version wins whole-row.
-- Categories from the old schema are ignored in this UI (as in your current app); the table/columns are left alone in the database.
+- Recipe categories are read from your original data and shown as coloured labels; you can assign or clear one per recipe, but there is no screen to create or rename categories yet (edit them in the database or in the old app for now).
 - The original database contains one dangling row in `recipe_main_liquids` (its recipe was deleted earlier). It is preserved in copies and skipped by exports — details in `SAFETY.md`.
 - The hub binds `0.0.0.0` so your phone can reach it: it is LAN-facing, unauthenticated by design. Don't port-forward it to the internet.
+
+---
+
+## What has to stay green
+
+```bash
+npm run typecheck     # strict TS over client + hub + scripts
+npm test              # hydration maths, cost/nutrition scaling, duplicate naming, replication rules, legacy-column preservation
+npm run build         # static build + seed bundle
+npm run e2e           # two real Chromium profiles as two devices: seed → view → create → edit → hub → second device → delete → offline
+npm run verify:data   # this app's rows == your original database's rows
+```
+
+`npm run e2e` needs `npm run serve` running in another terminal.

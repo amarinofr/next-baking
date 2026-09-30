@@ -80,16 +80,26 @@ export const reloadState = (app: AppHandle): Effect.Effect<AppState, ValidationE
 
 const formValue = (form: FormData, key: string): unknown => form.get(key);
 
+/**
+ * Water content is entered as a percentage ("85"), but a bare fraction ("0.85") is also
+ * accepted and converted, then clamped into the legal 0..1 range instead of letting the
+ * browser silently refuse to submit the form.
+ */
+const hybridWaterFraction = (raw: unknown): number => {
+  const value = numField(raw, 0);
+  const percent = value > 1 ? value : value * 100;
+  return Math.min(1, Math.max(0, percent / 100));
+};
+
 export const ingredientInputFromForm = (form: FormData): Effect.Effect<typeof IngredientInputSchema.Type, ValidationError> => {
   const categoryRaw = String(formValue(form, "category") ?? "dry");
   const category = categoryRaw === "hybrid" || categoryRaw === "liquid" ? categoryRaw : "dry";
-  const waterPercent = numField(formValue(form, "water_percent"), 0);
   return decode(IngredientInputSchema, "ingredient")({
     id: String(formValue(form, "id") ?? "") || undefined,
     name: String(formValue(form, "name") ?? "").trim(),
     category,
     price: numField(formValue(form, "price"), 0),
-    hybrid_water: category === "hybrid" ? waterPercent / 100 : 0,
+    hybrid_water: category === "hybrid" ? hybridWaterFraction(formValue(form, "water_percent")) : 0,
     calories: numField(formValue(form, "calories"), 0),
     protein: numField(formValue(form, "protein"), 0),
     fats: numField(formValue(form, "fats"), 0),
@@ -136,6 +146,8 @@ export const recipeInputFromForm = (form: FormData): Effect.Effect<typeof Recipe
     instructions: String(formValue(form, "instructions") ?? ""),
     servings: Math.max(1, Math.trunc(numField(formValue(form, "servings"), 1))),
     hydration_percent: numField(formValue(form, "hydration_percent"), 65),
+    // An empty selection means "no category"; a hidden field carries the stored one through.
+    category_id: form.has("category_id") ? (String(formValue(form, "category_id") ?? "") || null) : undefined,
     ingredients, mixes, main_liquids: mainLiquids,
   });
 };

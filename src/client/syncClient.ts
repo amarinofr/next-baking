@@ -60,14 +60,15 @@ export function syncNow(store: Store, deviceId: string): Effect.Effect<SyncOutco
     });
 
     const remote = Array.isArray(response.changes) ? response.changes : [];
-    const { toApply } = mergeChangesets(records, remote);
-    if (toApply.length > 0) yield* store.putRecords(toApply);
+    // Merged inside the store's transaction so a local edit made while this request was
+    // in flight can never be overwritten by an older copy coming back from the hub.
+    const applied = yield* store.mergeRemote(remote);
 
-    const merged = [...records.filter((r) => !toApply.some((a) => a.table === r.table && a.pk === r.pk)), ...toApply];
+    const merged = yield* store.allRecords();
     const nextCursor = Math.max(maxUpdatedAt(merged), Number(response.cursor ?? cursor) || 0);
     yield* store.setMeta(CURSOR_KEY, String(nextCursor));
 
-    return { pushed: outbox.length, applied: toApply.length, cursor: nextCursor, hubUrl };
+    return { pushed: outbox.length, applied, cursor: nextCursor, hubUrl };
   });
 }
 

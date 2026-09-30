@@ -55,6 +55,8 @@ export function makeRepository(deps: RepoDeps) {
         unit: "g",
         created_at: existing ? colsOf(existing).created_at : nowIso(),
         price: input.price,
+        // Legacy columns this UI does not edit yet are carried over instead of blanked.
+        price_unit: existing ? colsOf(existing).price_unit ?? null : null,
         category: input.category,
         calories: input.calories, protein: input.protein, fats: input.fats, carbs: input.carbs, sugar: input.sugar, fiber: input.fiber,
         hybrid_water: input.category === "hybrid" ? input.hybrid_water : 0,
@@ -149,6 +151,8 @@ export function makeRepository(deps: RepoDeps) {
       const existing = findRecord(records, "recipes", id);
       const recipe = buildRecord("recipes", {
         id, name: input.name, instructions: input.instructions ?? "", servings: Math.trunc(input.servings),
+        // Omitting category_id keeps the stored category; an explicit null clears it.
+        category_id: input.category_id !== undefined ? (input.category_id ?? null) : existing ? colsOf(existing).category_id ?? null : null,
         hydration_percent: input.hydration_percent, created_at: existing ? colsOf(existing).created_at : nowIso(),
       });
 
