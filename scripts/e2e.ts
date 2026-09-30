@@ -150,6 +150,25 @@ const hubIngredientNames = async (): Promise<string[]> => {
   return data.records.filter((row) => !row.deleted && row.table === "ingredients").map((row) => String(row.cols.name ?? ""));
 };
 
+/** What the mix editor currently shows, row by row. */
+const readComponentRows = async (page: Page): Promise<Array<{ ingredient: string; amount: number }>> =>
+  page.$$eval(".component-row", (rows) => rows.map((row) => ({
+    ingredient: (row.querySelector("select") as HTMLSelectElement | null)?.value ?? "",
+    amount: Number((row.querySelector("input[name=amount]") as HTMLInputElement | null)?.value ?? NaN),
+  })));
+
+const pendingWrites = async (page: Page): Promise<number> => page.evaluate(async () => Number(((await (window as any).__baking.debug()).pendingSync)));
+
+const hubMixComponents = async (mixName: string): Promise<Array<{ ingredient_id: string; amount: number }>> => {
+  const data = await hubJson<{ records: HubRow[] }>("/api/export.json");
+  const live = data.records.filter((row) => !row.deleted);
+  const mix = live.find((row) => row.table === "flour_mixes" && String(row.cols.name ?? "") === mixName);
+  if (!mix) return [];
+  return live.filter((row) => row.table === "flour_mix_components" && String(row.cols.mix_id ?? "") === String(mix.pk))
+    .map((row) => ({ ingredient_id: String(row.cols.ingredient_id), amount: Number(row.cols.amount) }))
+    .sort((a, b) => a.ingredient_id.localeCompare(b.ingredient_id));
+};
+
 /** Leave the hub as we found it. */
 const removeMarkerFromHub = async (needle: string): Promise<string> => {
   const data = await hubJson<{ records: HubRow[] }>("/api/export.json");
@@ -292,6 +311,27 @@ const main = async (): Promise<void> => {
     const mixEditPath = await waitForPath(A, /^\/mixes\/[^/]+\/edit$/);
     const componentRows = await A.$$eval(".component-row", (nodes) => nodes.length);
     check("clicking a mix row opens its editor with components loaded", componentRows > 0, `${mixEditPath} · ${componentRows} component row(s)`);
+
+    // The bug this guards against: leaving an editor and coming back used to pour one row's values into
+    // every component row, which looked like the mix had been erased — and would have saved that way too.
+    step = "mix editor round trip";
+    const queuedBefore = await pendingWrites(A);
+    const onOpen = await readComponentRows(A);
+    await settleTry("leave the mix editor", () => A.goBack());
+    await waitForPath(A, /^\/mixes$/);
+    await clickRowUntil(A, firstMix, /^\/mixes\/[^/]+\/edit$/);
+    const afterRoundTrip = await readComponentRows(A);
+
+    const expected = await hubMixComponents(firstMix);
+    const nowSorted = [...afterRoundTrip].sort((a, b) => a.ingredient.localeCompare(b.ingredient));
+    const storedSorted = [...expected].sort((a, b) => a.ingredient_id.localeCompare(b.ingredient_id));
+    const sameShape = nowSorted.length === storedSorted.length;
+    const faithful = sameShape && nowSorted.every((row, i) => row.ingredient === storedSorted[i]!.ingredient_id && Math.abs(row.amount - storedSorted[i]!.amount) < 0.01);
+    check(`coming back to "${firstMix}" keeps every component its own ingredient`, faithful && new Set(afterRoundTrip.map((r) => r.ingredient)).size > 1,
+      `open: ${onOpen.map((r) => `${r.ingredient}=${r.amount}`).join(", ")} → back: ${afterRoundTrip.map((r) => `${r.ingredient}=${r.amount}`).join(", ")}`);
+
+    const queuedAfter = await pendingWrites(A);
+    check("that round trip queued no writes", queuedAfter <= queuedBefore, `queued ${queuedBefore} → ${queuedAfter}`);
 
     // ------------------------------------------------------------------ phone layout
     step = "phone layout";

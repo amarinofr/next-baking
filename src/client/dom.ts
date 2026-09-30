@@ -138,8 +138,8 @@ export const runAction = async <A, E>(program: import("effect").Effect.Effect<A,
   const { Effect } = await import("effect");
   const result = await Effect.runPromise(Effect.either(program));
   if (result._tag === "Left") {
-    const error = result.left as { _tag?: string; reason?: string; cause?: string; message?: string };
-    toast(error.reason ?? error.cause ?? error.message ?? error._tag ?? "something went wrong", "err");
+    const error = result.left as { _tag?: string; field?: string; reason?: string; cause?: string; message?: string };
+    toast([error.field, error.reason].filter(Boolean).join(": ") || error._tag || "something went wrong", "err");
     return false;
   }
   return true;
@@ -149,8 +149,8 @@ export const runUi = async <A, E>(program: import("effect").Effect.Effect<A, E, 
   const { Effect } = await import("effect");
   const result = await Effect.runPromise(Effect.either(program));
   if (result._tag === "Left") {
-    const error = result.left as { _tag?: string; reason?: string; cause?: string; message?: string };
-    toast(error.reason ?? error.cause ?? error.message ?? error._tag ?? "something went wrong", "err");
+    const error = result.left as { _tag?: string; field?: string; reason?: string; cause?: string; message?: string };
+    toast([error.field, error.reason].filter(Boolean).join(": ") || error._tag || "something went wrong", "err");
     return undefined;
   }
   return result.right;

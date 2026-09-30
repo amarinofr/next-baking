@@ -175,6 +175,29 @@ export function decode<A>(schema: Schema.Schema<A, any, never>, label: string) {
     (Schema.decodeUnknown(schema as any)(input) as Effect.Effect<A, unknown>).pipe(Effect.mapError(toValidation(label)));
 }
 
+/**
+ * Component rows are keyed by the thing they point at (an ingredient, a mix). Two rows naming the same
+ * target collapse into one another when saved, so a form must never submit duplicates. This is not a
+ * nicety: it is what stops a mis-filled form from silently deleting half of a mix.
+ */
+export function distinctRows<R>(
+  rows: readonly R[],
+  keyOf: (row: R) => string,
+  field: string,
+  label: string,
+): Effect.Effect<readonly R[], ValidationError> {
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const key = keyOf(row);
+    if (!key) continue;
+    if (seen.has(key)) {
+      return Effect.fail(new ValidationError({ field, reason: `two rows use the same ${label} — combine them into one row` }));
+    }
+    seen.add(key);
+  }
+  return Effect.succeed(rows);
+}
+
 /** Coerce a raw form field to a finite number. */
 export const numField = (raw: unknown, fallback = 0): number => {
   const n = typeof raw === "number" ? raw : Number(String(raw ?? "").trim());

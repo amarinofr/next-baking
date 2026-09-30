@@ -89,24 +89,35 @@ export async function startApp(): Promise<void> {
   let route: Route = routeFor(window.location.pathname, window.location.search);
 
   // Form content survives any re-render (background sync, coming back to a page, …).
-  const drafts = new Map<string, Record<string, string>>();
+  type DraftField = { readonly name: string; readonly value: string };
+  const drafts = new Map<string, ReadonlyArray<DraftField>>();
   const fieldNodes = () => [...document.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>("#app form [name]")];
 
   const captureDraft = (): void => {
-    if (fieldNodes().length === 0) return;
-    const values: Record<string, string> = {};
-    for (const node of fieldNodes()) { const name = node.getAttribute("name"); if (name) values[name] = node.value; }
-    drafts.set(route.path, values);
+    const nodes = fieldNodes();
+    if (nodes.length === 0) return;
+    drafts.set(route.path, nodes.map((node) => ({ name: node.getAttribute("name") ?? "", value: node.value })));
   };
 
+  /**
+   * Component rows repeat their field names (every mix row has an "ingredient_id" and an "amount"), so a
+   * draft keyed by name would pour one row's value into every row and quietly rewrite the whole mix.
+   * Restore position by position, and only when the rebuilt form has exactly the same fields in the same
+   * order — otherwise throw the draft away rather than guess.
+   */
   const restoreDraft = (): void => {
-    const values = drafts.get(route.path);
-    if (!values) return;
-    for (const node of fieldNodes()) {
-      const name = node.getAttribute("name");
-      if (!name || !(name in values)) continue;
-      if (node.value === values[name]) continue;
-      node.value = values[name]!;
+    const saved = drafts.get(route.path);
+    if (!saved) return;
+    const nodes = fieldNodes();
+    if (nodes.length !== saved.length) { drafts.delete(route.path); return; }
+    for (let i = 0; i < nodes.length; i += 1) {
+      if ((nodes[i]!.getAttribute("name") ?? "") !== saved[i]!.name) { drafts.delete(route.path); return; }
+    }
+    for (let i = 0; i < nodes.length; i += 1) {
+      const node = nodes[i]!;
+      const value = saved[i]!.value;
+      if (node.value === value) continue;
+      node.value = value;
       node.dispatchEvent(new Event("input", { bubbles: true }));
       node.dispatchEvent(new Event("change", { bubbles: true }));
     }
