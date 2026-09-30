@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Effect } from "effect";
 
-import { buildRecipeView, computeRecipeTotals, type IngredientUse, type MixUse } from "../src/domain/calc.ts";
+import { buildRecipeView, computeRecipeTotals, mixCostPerKg, type IngredientUse, type MixUse } from "../src/domain/calc.ts";
 import { nextDuplicateName, parseDuplicateName } from "../src/domain/duplicate.ts";
 import { changesSince, mergeChangesets, wins } from "../src/domain/syncMerge.ts";
 import { makeMemoryStore } from "../src/client/store.ts";
@@ -34,12 +34,43 @@ test("hydration math matches the legacy acceptance case", () => {
   assert.equal(Number(totals.effective_hydration_percent.toFixed(1)), 91.3);
 });
 
-test("mix components scale by grams of mix used", () => {
+test("a flour mix scales by whatever its own components add up to", () => {
+  // A mix defined by a single 600 g component: using 250 g of it is 250 g of flour.
   const mix: MixUse = { mix_id: "m", name: "Mix", amount: 250, components: [{ ingredient_id: "a", name: "A", amount_per_kg: 600, price: 20 }] };
   const totals = computeRecipeTotals({ hydration_percent: 100, servings: 1, ingredients: [], mixes: [mix], main_liquids: [] });
-  assert.equal(totals.flour_weight_from_mixes, 150); // 600 * 250/1000
-  assert.equal(totals.target_water, 150);
-  assert.equal(totals.total_cost, 3); // 150 g * (€20 per 1000 g / 1000)
+  assert.equal(totals.flour_weight_from_mixes, 250);
+  assert.equal(totals.target_water, 250);
+  assert.equal(Number(totals.total_cost.toFixed(4)), Number(((250 * 20) / 1000).toFixed(4)));
+
+  // A mix that happens to total exactly 1000 g still behaves like the original app.
+  const legacy: MixUse = {
+    mix_id: "m2", name: "GF flour", amount: 800,
+    components: [{ ingredient_id: "rice", name: "Rice flour", amount_per_kg: 800, price: 4 }, { ingredient_id: "starch", name: "Starch", amount_per_kg: 200, price: 6 }],
+  };
+  const legacyTotals = computeRecipeTotals({ hydration_percent: 65, servings: 1, ingredients: [], mixes: [legacy], main_liquids: [] });
+  assert.equal(legacyTotals.flour_weight_from_mixes, 800);                     // everything the recipe uses is flour here
+  assert.equal(Number((legacyTotals.scaled_mix_components[1]?.amount ?? 0).toFixed(1)), 160);   // starch share
+  assert.equal(Number(legacyTotals.target_water.toFixed(1)), 520);            // 800 g * 65%
+});
+
+test("mixes do not have to reach 1000 g for recipes and costs to work", () => {
+  // The requested case: components totalling 703 g, a bread using 300 g of that mix.
+  const freeform: MixUse = {
+    mix_id: "f", name: "Whatever mix", amount: 300,
+    components: [
+      { ingredient_id: "a", name: "Rice flour", amount_per_kg: 503, price: 4 },
+      { ingredient_id: "b", name: "Potato starch", amount_per_kg: 200, price: 6 },
+    ],
+  };
+  const totals = computeRecipeTotals({ hydration_percent: 70, servings: 1, ingredients: [], mixes: [freeform], main_liquids: [] });
+
+  assert.equal(Number(totals.flour_weight_from_mixes.toFixed(6)), 300);          // the whole portion used is flour
+  assert.equal(Number((totals.scaled_mix_components[0]?.amount ?? 0).toFixed(2)), Number((300 * (503 / 703)).toFixed(2)));
+  assert.equal(Number(totals.target_water.toFixed(1)), 210);                     // 300 g * 70%
+
+  // Cost is per kilogram of the mix, whatever the batch weighs.
+  const expectedPerKg = (((503 * 4 + 200 * 6) / 1000) / 703) * 1000;
+  assert.equal(Number(mixCostPerKg(freeform.components.map((c) => ({ amount: c.amount_per_kg, price: c.price ?? 0 }))).toFixed(3)), Number(expectedPerKg.toFixed(3)));
 });
 
 test("cost and nutrition aggregate direct ingredients and mix components", () => {

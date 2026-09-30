@@ -14,7 +14,7 @@ import { createServer } from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join, normalize, resolve } from "node:path";
-import { applyChanges, ensureSchema, getDeviceCursor, hubStats, importLegacyDb, readRecords, setDeviceCursor } from "../src/server/sqliteStore.ts";
+import { applyChanges, countDanglingLinks, ensureSchema, getDeviceCursor, hubStats, importLegacyDb, readRecords, setDeviceCursor } from "../src/server/sqliteStore.ts";
 import type { RowRecord } from "../src/domain/types.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -89,10 +89,13 @@ const serveStatic = (req: any, res: any) => {
     }
   }
 
-  const fallback = join(DIST, "index.html");
+  // In-app routes (/recipes/<id>, /ingredients/<id>/edit, …) have no file of their own:
+  // serve the app shell and let the client router draw the right view. Missing *assets* still 404.
+  const wantsPage = !extname(urlPath) || extname(urlPath) === ".html";
+  const fallback = join(DIST, wantsPage ? "index.html" : "404.html");
   if (existsSync(fallback)) {
     const body = readFileSync(fallback);
-    res.writeHead(404, { "content-type": MIME[".html"], "content-length": body.length });
+    res.writeHead(wantsPage ? 200 : 404, { "content-type": MIME[".html"], "content-length": body.length, "cache-control": "no-cache" });
     res.end(body);
     return;
   }
@@ -110,7 +113,7 @@ const server = createServer(async (req, res) => {
   try {
     if (url.pathname === "/api/info") {
       const devices = db.prepare("SELECT device_id, cursor FROM sync_meta").all() as Array<{ device_id: string; cursor: number }>;
-      sendJson(res, 200, { app: "next-baking-app hub", db: DB_PATH, tables: hubStats(db), devices });
+      sendJson(res, 200, { app: "next-baking-app hub", db: DB_PATH, tables: hubStats(db), dangling_links: countDanglingLinks(db), devices });
       return;
     }
 

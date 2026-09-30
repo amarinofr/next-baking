@@ -34,12 +34,16 @@ export const pct = (n: number): string => `${n.toFixed(n % 1 === 0 ? 0 : 1)}%`;
 
 export const askConfirm = (message: string): boolean => window.confirm(message);
 
+/** Small messages in the corner — they never cover what you are looking at. */
 export const toast = (message: string, kind: "ok" | "err" | "warn" = "ok"): void => {
-  const app = document.getElementById("app");
-  if (!app) return;
-  const note = el("div", { class: `notice ${kind === "ok" ? "ok" : kind}` }, message);
-  app.prepend(note);
-  window.setTimeout(() => note.remove(), kind === "err" ? 8000 : 4000);
+  const box = document.getElementById("toasts");
+  if (!box) return;
+  const note = el("div", { class: kind === "ok" ? "toast" : `toast ${kind}` }, message);
+  box.append(note);
+  window.setTimeout(() => {
+    note.style.opacity = "0";
+    window.setTimeout(() => note.remove(), 250);
+  }, kind === "err" ? 8000 : 3500);
 };
 
 export const setStatus = (left: string, right?: string): void => {

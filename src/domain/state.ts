@@ -64,9 +64,13 @@ export function buildState(records: Iterable<RowRecord>): Effect.Effect<AppState
   });
 }
 
-/** Components of a mix, stored as grams per 1000 g of mix. */
+/** Components of a mix: grams within whatever that mix happens to add up to. */
 export const componentsOf = (state: AppState, mixId: string): FlourMixComponent[] =>
   state.mixComponents.filter((c) => c.mix_id === mixId);
+
+/** Grams the mix's own components total (its "batch"); recipes scale against this. */
+export const mixTotalGrams = (components: ReadonlyArray<{ amount: number }>): number =>
+  components.reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
 
 /** Assemble exactly what the calculator needs for one stored recipe. */
 export function recipeMathInput(state: AppState, recipeId: string): RecipeMathInput | undefined {
@@ -95,7 +99,7 @@ export function recipeMathInput(state: AppState, recipeId: string): RecipeMathIn
       components: componentsOf(state, mix.id).map((c) => {
         const ing = state.ingredients.get(c.ingredient_id);
         return {
-          ingredient_id: c.ingredient_id, name: ing?.name ?? "(deleted)", amount_per_kg: c.amount,
+          ingredient_id: c.ingredient_id, name: ing?.name ?? "(deleted)", amount_per_kg: c.amount, // grams inside the mix batch
           category: ing?.category ?? "dry", price: ing?.price ?? 0, calories: ing?.calories ?? 0,
           protein: ing?.protein ?? 0, fats: ing?.fats ?? 0, carbs: ing?.carbs ?? 0,
           sugar: ing?.sugar ?? 0, fiber: ing?.fiber ?? 0, hybrid_water: ing?.hybrid_water ?? 0,

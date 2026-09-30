@@ -57,10 +57,8 @@ export function normalizeRow(table: TableName, raw: Record<string, unknown>, sna
       out[column] = defaultFor(column);
     }
   }
-  // Legacy timestamps are SQL datetimes ("2026-07-13 12:12:22") — keep them readable but ISO-normalized.
-  if (typeof out.created_at === "string" && out.created_at && !out.created_at.includes("T")) {
-    out.created_at = out.created_at.replace(" ", "T") + "Z";
-  }
+  // created_at is kept EXACTLY as your original stores it (e.g. "2026-04-11 21:19:58 +0000 +00").
+  // Rewriting it would look tidier but would silently change data that the old app also reads.
   return out;
 }
 

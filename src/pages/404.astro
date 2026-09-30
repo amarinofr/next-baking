@@ -1,0 +1,9 @@
+---
+// Any in-app route without its own file (/recipes/<id>, /ingredients/<id>/edit, …) lands here.
+// The client router reads the URL and draws the right view, so deep links and refreshes just work.
+import Layout from "../layouts/Layout.astro";
+---
+
+<Layout title="Baking Recipes" page="fallback">
+  <div data-view></div>
+</Layout>

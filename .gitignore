@@ -8,3 +8,9 @@ data/
 snapshots/
 exports/
 public/seed/state.json
+
+# reference copy of your old app — local only, deliberately not in this repo
+legacy-baking/
+
+# parallel worktrees (visual polish fork)
+.worktrees/

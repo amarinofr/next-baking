@@ -48,6 +48,16 @@ Run `./run.sh` on whichever machine you want as the hub; every other device just
 
 ---
 
+## How it behaves (an app, not a stack of pages)
+
+- Every item opens by clicking anywhere on it: a recipe card or table row opens the recipe, an ingredient or mix row opens its editor.
+- Navigation happens inside the page (`/recipes/<id>`, `/ingredients/<id>/edit`, …): no reloads, no flicker, scroll position remembered when you come back, and a half-typed form survives any background update.
+- Deep links and offline work because the hub serves the app shell for any route and the service worker caches it — refreshing `/recipes/<id>` or opening the app in a train tunnel lands on the right screen.
+- Sync is automatic: a change is pushed ~1.2 s after you make it, each device pulls every 15 s while it is open and online, and returning to the tab triggers a catch-up immediately. There is a **Sync now** button and an auto-sync switch on the *Sync* screen for when you want control.
+- Flour mixes are shown with their own batch total and cost per kg, and recipes scale them proportionally whatever that total is.
+
+---
+
 ## Commands
 
 | Command | What it does |
@@ -57,9 +67,10 @@ Run `./run.sh` on whichever machine you want as the hub; every other device just
 | `npm run serve` / `./run.sh` | serve `dist/` + SQLite sync hub on `:7902` |
 | `npm test` | domain unit tests (hydration maths, cost/nutrition, duplicate naming, replication merge) |
 | `npm run typecheck` | strict TypeScript check across client, server, scripts |
-| `npm run e2e` | drives real Chromium: seeded data loads, recipe maths renders, scaler works, create/edit survives reload, second device receives it via the hub, offline render still works |
+| `npm run e2e` | drives two real Chromium profiles as two devices: seed, clickable cards/rows, in-app navigation without reloads, scaler writes nothing, create → edit → auto-sync → other device, delete replication, phone width, offline |
 | `npm run snapshot` | **read-only** hot backup of every SQLite file found in the original app into `snapshots/` |
 | `npm run snapshot -- --refresh` | additionally refresh this app's working copy (`data/app.db`) from the old app's live DB |
+| `npm run refresh` | merge the newest snapshot into `data/app.db` **additively** (last-write-wins, never deletes anything here) |
 | `npm run verify:data` | compare `data/app.db` row-by-row against the newest snapshot of your original database (fails if anything is missing or changed) |
 | `npm run export:legacy` | write this app's data back out as a plain SQLite file using the **original** schema (`exports/legacy-compat-*.db`) — the rollback path |
 
@@ -86,7 +97,8 @@ Table and column names match the legacy app exactly (`ingredients` incl. `price_
 Ported 1:1 from your current Go backend + hydration box, including the "hybrids are additive" fix:
 
 ```
-flour_weight      = Σ mix components scaled by grams of mix used   (component_g × mix_g / 1000)
+batch_g           = Σ a mix's own component grams                    # a mix does NOT have to total 1000 g
+flour_weight      = Σ mix component_g × mix_g_used / batch_g         # mixes scale proportionally
 target_water      = flour_weight × hydration% / 100                  # hydration base = mixes only
 main_liquid_i     = target_water × percentage_i / 100                # split across your main liquids
 water_from_ings   = Σ liquid amounts + Σ hybrid amount × hybrid_water
@@ -108,11 +120,15 @@ Duplicate naming keeps the `(N)` scheme but is collision-safe and no longer stac
 
 Each device stores every row as `{table, pk, cols, updated_at, deleted, origin}`. A sync round-trip pushes local rows newer than the device's cursor and pulls everything the hub changed since that cursor; both sides keep the row with the greater `(updated_at, origin)` — and an *identical* version is never re-applied, so a slow pull can never resurrect something you just edited or deleted. Merges happen inside one storage transaction, so they are deterministic and converge no matter which device talks first. Deletes are tombstones (`deleted = true`) and replicate like any other write. Offline edits are simply rows whose `updated_at` is beyond the cursor — they wait in the outbox until a hub is reachable.
 
+A device only ever advances its cursor past changes it has actually seen (never past the hub's wall-clock stamp), so a row written on the hub while a request was in flight cannot be skipped. Sync requests are single-flight: a slow round-trip delays the next one instead of stacking them.
+
 ---
 
 ## Known limits (so nothing surprises you)
 
 - Cross-device convergence needs at least one reachable hub at some point; two devices that never see each other (or a shared hub) will not merge.
+- Auto-sync is deliberately unhurried: expect another device's change to appear within ~15 s (**Sync now** does it instantly).
+- Deleted rows stay in storage as tombstones (a few bytes each) — they are never shown, and exports omit them. There is no garbage collection of old tombstones yet.
 - Last-write-wins is per **row**, not per field: if you edit the same recipe on two phones before either syncs, one version wins whole-row.
 - Recipe categories are read from your original data and shown as coloured labels; you can assign or clear one per recipe, but there is no screen to create or rename categories yet (edit them in the database or in the old app for now).
 - The original database contains one dangling row in `recipe_main_liquids` (its recipe was deleted earlier). It is preserved in copies and skipped by exports — details in `SAFETY.md`.

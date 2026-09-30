@@ -61,7 +61,12 @@ const tableInfo = (db: DatabaseSync, table: string): string[] =>
 
 /** Additively migrate a legacy database copy: never drops or renames anything. */
 export function ensureSchema(db: DatabaseSync): void {
-  db.exec("PRAGMA foreign_keys = ON;");
+  // Row-level last-write-wins replication can deliver a link row *before* its parent recipe
+  // arrives (devices write independently). With inherited SQLite foreign keys enforced, such
+  // a row would fail to insert and — once a client advanced its cursor past it — be lost.
+  // The replica therefore does not enforce foreign keys: integrity is kept by the app layer
+  // (cascades on delete) and rebuilt when exporting back to a legacy-compatible database.
+  db.exec("PRAGMA foreign_keys = OFF;");
   db.exec("PRAGMA journal_mode = WAL;");
 
   for (const table of DDL_ORDER) {
@@ -83,7 +88,6 @@ export function ensureSchema(db: DatabaseSync): void {
   // Recipe categories are replicated too (they exist in your original database).
   db.exec(`CREATE TABLE IF NOT EXISTS sync_meta (device_id TEXT PRIMARY KEY, cursor INTEGER NOT NULL DEFAULT 0)`);
 
-  pruneDanglingLinks(db);
   enforceLinkTableKeys(db);
 }
 
@@ -108,24 +112,28 @@ const PARENT_KEYS: Record<string, Array<[string, string]>> = {
   recipe_main_liquids: [["recipe_id", "recipes"], ["ingredient_id", "ingredients"]],
 };
 
-/** Drop link rows pointing at a parent that no longer exists (leftovers from old deletes). */
-export function pruneDanglingLinks(db: DatabaseSync): number {
-  let removed = 0;
+/**
+ * Read-only diagnostic: link rows whose parent is missing. Your original database contains a
+ * couple of these from old deletes; we report them instead of silently deleting them.
+ */
+export const countDanglingLinks = (db: DatabaseSync): Record<string, number> => {
+  const out: Record<string, number> = {};
   for (const [table, parents] of Object.entries(PARENT_KEYS)) {
+    let count = 0;
     for (const [column, parentTable] of parents) {
-      const rows = db.prepare(
-        `SELECT rowid AS _rowid FROM ${table} t WHERE t.${column} NOT IN (SELECT id FROM ${parentTable})`,
-      ).all() as Array<{ _rowid: number }>;
-      if (rows.length === 0) continue;
-      const del = db.prepare(`DELETE FROM ${table} WHERE rowid = ?`);
-      for (const row of rows) del.run(row._rowid);
-      removed += rows.length;
-      console.log(`[hub] pruned ${rows.length} dangling row(s) from ${table} (${column} has no ${parentTable})`);
+      const row = db.prepare(`SELECT COUNT(*) AS n FROM ${table} t WHERE t.${column} NOT IN (SELECT id FROM ${parentTable})`).get() as { n?: number } | undefined;
+      count += Number(row?.n ?? 0);
     }
+    if (count > 0) out[table] = count;
   }
-  return removed;
-}
+  return out;
+};
 
+/**
+ * Link tables must not accumulate duplicates through replication, but a link whose parent is
+ * not present *yet* is kept: it is real data, and the parent may arrive in a later round from
+ * another device. Deleting such rows would lose genuine edits.
+ */
 export function enforceLinkTableKeys(db: DatabaseSync): void {
   for (const [table, keys] of LINK_TABLE_KEYS) {
     const rows = db.prepare(`SELECT rowid AS _rowid, * FROM ${table}`).all() as Array<Record<string, unknown>>;
@@ -210,14 +218,8 @@ export function applyChanges(db: DatabaseSync, records: readonly RowRecord[]): {
       return String(raw);
     });
 
-    const parents = PARENT_KEYS[record.table] ?? [];
-    const missingParent = parents.find(([column, parentTable]) => {
-      const value = String(record.cols[column] ?? "");
-      const found = db.prepare(`SELECT 1 AS ok FROM ${parentTable} WHERE id = ?`).get(value) as { ok?: number } | undefined;
-      return !found;
-    });
-    if (missingParent) { rejected += 1; console.warn(`[hub] skipped ${record.table} ${record.pk}: ${missingParent[0]} has no ${missingParent[1]}`); continue; }
-
+    // Parents can arrive after their children; with foreign keys off the child is simply
+    // stored now instead of dropped on the floor.
     try {
       db.prepare(`INSERT OR REPLACE INTO ${record.table} (${columns.join(", ")}) VALUES (${placeholders})`).run(...values);
       applied += 1;

@@ -1,22 +1,39 @@
-/** Landing pages: ingredients table, flour mixes table, recipes grid/table. */
+/** List screens: ingredients table, flour-mix table, recipes grid + recipes table.
+ *  Markup follows the original app's tables/cards; whole rows and cards are clickable. */
 
 import { mixCostPerKg, summarizeRecipe } from "../../domain/calc.ts";
-import { componentsOf, recipeMathInput, type AppState } from "../../domain/state.ts";
+import { componentsOf, mixTotalGrams, recipeMathInput, type AppState } from "../../domain/state.ts";
 import type { Ingredient } from "../../domain/schema.ts";
 import { askConfirm, clear, el, euro, grams, num, pct, runAction, runUi, toast } from "../dom.ts";
 import { categoryChip, type ViewCtx } from "./context.ts";
 
 const byName = (a: { name: string }, b: { name: string }): number => a.name.localeCompare(b.name);
 
+const cell = (text: string, className?: string): HTMLElement => el("td", { class: className }, text);
+
+/** edit · duplicate · delete, exactly like the old app's action column. */
 const actions = (handlers: Array<[label: string, kind: string, handler: () => void]>): HTMLElement =>
   el("div", { class: "row-actions" }, ...handlers.map(([label, kind, handler]) => {
-    const button = el("button", { class: `small ${kind}` }, label);
+    const button = el("button", { class: kind === "danger" ? "danger" : "small", type: "button", title: label }, label);
     button.addEventListener("click", (event) => { event.stopPropagation(); handler(); });
     return button;
   }));
 
-const cell = (text: string, label?: string, className?: string): HTMLElement =>
-  el("td", { "data-label": label ?? "", class: className }, text);
+/** Make a row / card open something when clicked anywhere on it. */
+function clickable(node: HTMLElement, open: () => void, label: string): void {
+  node.classList.add("clickable");
+  node.setAttribute("role", "link");
+  node.setAttribute("tabindex", "0");
+  node.setAttribute("aria-label", `${label} (open)`);
+  node.addEventListener("click", open);
+  node.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    open();
+  });
+}
+
+const emptyMessage = (message: string): HTMLElement => el("p", { class: "empty" }, message);
 
 // ---------------- ingredients ----------------
 
@@ -25,59 +42,58 @@ export function renderIngredients(ctx: ViewCtx, mountPoint: HTMLElement): void {
   const all = [...state.ingredients.values()].sort(byName);
 
   const search = el("input", { type: "search", placeholder: "filter by name…" }) as HTMLInputElement;
-  const term = { value: "" };
-  search.value = term.value;
-
-  const tableWrap = el("div");
+  const tableWrap = el("div", { class: "table-wrap" });
+  let term = "";
 
   const draw = (): void => {
     clear(tableWrap);
-    const filtered = all.filter((i) => i.name.toLowerCase().includes(term.value.toLowerCase()));
+    const filtered = all.filter((i) => i.name.toLowerCase().includes(term.toLowerCase()));
 
     if (filtered.length === 0) {
-      tableWrap.append(el("p", { class: "muted" }, all.length === 0 ? "No ingredients yet — create the first one." : "Nothing matches that filter."));
+      tableWrap.replaceChildren();
+      tableWrap.append(emptyMessage(all.length === 0 ? "No ingredients yet." : "Nothing matches that filter."));
       return;
     }
 
     const rows = filtered.map((ing) => {
+      const categoryText = ing.category === "hybrid" ? `hybrid · ${pct((ing.hybrid_water ?? 0) * 100)} water` : ing.category;
       const tr = el(
         "tr",
         {},
-        cell(ing.name),
-        cell(ing.category, "type"),
-        ing.category === "hybrid" ? cell(pct(ing.hybrid_water * 100), "water") : cell("—", "water"),
-        cell(euro(ing.price), "€/kg", "num"),
-        cell(num(ing.calories, 0), "kcal/100g", "num"),
+        cell(ing.name, "name"),
+        cell(categoryText, "dim capitalize"),
+        cell(euro(ing.price), "dim"),
         el("td", {}, actions([
-          ["edit", "", () => ctx.navigate(`/ingredient-edit?id=${ing.id}`)],
-          ["duplicate", "", () => runUi(ctx.app.repo.duplicateIngredient(ing.id)).then((r) => { if (r) ctx.navigate(`/ingredient-edit?id=${String(r.cols.id)}`); })],
-          ["delete", "danger", () => {
-            const usedIn = state.mixComponents.filter((c) => c.ingredient_id === ing.id).length + state.recipeIngredients.filter((r) => r.ingredient_id === ing.id).length;
-            if (!askConfirm(`Delete "${ing.name}"? It is referenced by ${usedIn} mix/recipe row(s), which will be removed too.`)) return;
-            runAction(ctx.app.repo.deleteIngredient(ing.id)).then((done) => { if (!done) return; toast(`Deleted ${ing.name}.`); void ctx.refresh(); });
-          }],
+          ["edit", "", () => ctx.navigate(`/ingredients/${ing.id}/edit`)],
+          ["duplicate", "", () => runUi(ctx.app.repo.duplicateIngredient(ing.id)).then((row) => { if (row) ctx.navigate(`/ingredients/${String(row.cols.id)}/edit`); })],
+          ["delete", "danger", () => deleteIngredient(ctx, state, ing)],
         ])),
       );
+      clickable(tr, () => ctx.navigate(`/ingredients/${ing.id}/edit`), ing.name);
       return tr;
     });
 
     tableWrap.append(el("table", { class: "data" },
-      el("thead", {}, el("tr", {}, el("th", {}, "Name"), el("th", {}, "Type"), el("th", {}, "Water"), el("th", { class: "num" }, "Price"), el("th", { class: "num" }, "Energy"), el("th", {}, ""))),
+      el("thead", {}, el("tr", {}, el("th", {}, "Name"), el("th", {}, "Category"), el("th", {}, "Price (€/kg)"), el("th", {}))),
       el("tbody", {}, ...rows),
     ));
   };
 
-  search.addEventListener("input", () => { term.value = search.value; draw(); });
+  search.addEventListener("input", () => { term = search.value.trim(); draw(); });
+  draw();   // first paint — without this the list mounted empty
 
   clear(mountPoint);
   mountPoint.append(
-    el("div", { class: "page-head" },
-      el("h2", {}, `Ingredients (${all.length})`),
-      el("a", { class: "btn primary", href: "/ingredients/new" }, "+ New ingredient"),
-    ),
-    el("section", { class: "panel" }, el("div", { class: "field" }, search), tableWrap),
+    el("div", { class: "page-head" }, el("h2", {}, "All Ingredients"), el("a", { class: "create", href: "/ingredients/new" }, "+ Create New")),
+    el("div", { class: "search-row" }, search),
+    tableWrap,
   );
-  draw();
+}
+
+function deleteIngredient(ctx: ViewCtx, state: AppState, ing: Ingredient): void {
+  const usedIn = state.mixComponents.filter((c) => c.ingredient_id === ing.id).length + state.recipeIngredients.filter((r) => r.ingredient_id === ing.id).length;
+  if (!askConfirm(`Delete "${ing.name}"? It is referenced by ${usedIn} mix/recipe row(s), which will be removed too.`)) return;
+  runAction(ctx.app.repo.deleteIngredient(ing.id)).then((done) => { if (!done) return; toast(`Deleted ${ing.name}.`); void ctx.refresh(); });
 }
 
 // ---------------- flour mixes ----------------
@@ -90,45 +106,41 @@ export function renderMixes(ctx: ViewCtx, mountPoint: HTMLElement): void {
 
   if (all.length === 0) {
     mountPoint.append(
-      el("div", { class: "page-head" }, el("h2", {}, "Flour Mixes"), el("a", { class: "btn primary", href: "/mixes/new" }, "+ New mix")),
-      el("section", { class: "panel" }, el("p", { class: "muted" }, "No flour mixes yet.")),
+      el("div", { class: "page-head" }, el("h2", {}, "All Flour Mixes"), el("a", { class: "create", href: "/mixes/new" }, "+ Create New")),
+      emptyMessage("No flour mixes yet."),
     );
     return;
   }
 
   const rows = all.map((mix) => {
     const components = componentsOf(state, mix.id);
-    const totalGrams = components.reduce((sum, c) => sum + c.amount, 0);
+    const total = mixTotalGrams(components);
+    const cost = mixCostPerKg(components.map((c) => ({ amount: c.amount, price: state.ingredients.get(c.ingredient_id)?.price ?? 0 })));
 
-    const breakdown = el("div", { class: "sub-list" },
-      ...components.map((c) => el("span", {}, `${state.ingredients.get(c.ingredient_id)?.name ?? "(deleted ingredient)"}: ${grams(c.amount)}`)),
-    );
-
-    return el("tr", {},
-      cell(`${mix.name}${totalGrams !== 1000 ? ` (totals ${grams(totalGrams)})` : ""}`),
-      cell(String(components.length), "components"),
-      cell(euro(mixCostPerKg(components.map((c) => ({ amount: c.amount, price: state.ingredients.get(c.ingredient_id)?.price ?? 0 })))), "€/kg", "num"),
-      el("td", {}, breakdown),
+    const tr = el("tr", {},
+      cell(mix.name, "name"),
+      cell(`${components.length} ingredient${components.length === 1 ? "" : "s"} · ${grams(total)} · ${euro(cost)}/kg`, "dim"),
       el("td", {}, actions([
-        ["edit", "", () => ctx.navigate(`/mix-edit?id=${mix.id}`)],
-        ["duplicate", "", () => runUi(ctx.app.repo.duplicateMix(mix.id)).then((r) => { if (r?.[0]) ctx.navigate(`/mix-edit?id=${String(r[0].cols.id)}`); })],
+        ["edit", "", () => ctx.navigate(`/mixes/${mix.id}/edit`)],
+        ["duplicate", "", () => runUi(ctx.app.repo.duplicateMix(mix.id)).then((rows) => { if (rows?.[0]) ctx.navigate(`/mixes/${String(rows[0].cols.id)}/edit`); })],
         ["delete", "danger", () => {
           const usedIn = state.recipeMixes.filter((r) => r.mix_id === mix.id).length;
-          if (!askConfirm(`Delete mix "${mix.name}"? ${usedIn} recipe(s) use it and will lose that mix.`)) return;
+          if (!askConfirm(`Delete mix "${mix.name}"? ${usedIn} recipe link(s) using it will be removed too.`)) return;
           runAction(ctx.app.repo.deleteMix(mix.id)).then((done) => { if (!done) return; toast(`Deleted ${mix.name}.`); void ctx.refresh(); });
-        }],
-      ])),
+        }]]),
+      ),
     );
+    clickable(tr, () => ctx.navigate(`/mixes/${mix.id}/edit`), mix.name);
+    return tr;
   });
 
   mountPoint.append(
-    el("div", { class: "page-head" }, el("h2", {}, `Flour Mixes (${all.length})`), el("a", { class: "btn primary", href: "/mixes/new" }, "+ New mix")),
-    el("section", { class: "panel" },
-      el("table", { class: "data" },
-        el("thead", {}, el("tr", {}, el("th", {}, "Name"), el("th", {}, "Components"), el("th", { class: "num" }, "Price"), el("th", {}, "Breakdown per kg"), el("th", {}, ""))),
-        el("tbody", {}, ...rows),
-      ),
-    ),
+    el("div", { class: "page-head" }, el("h2", {}, "All Flour Mixes"), el("a", { class: "create", href: "/mixes/new" }, "+ Create New")),
+    el("div", { class: "table-wrap" }, el("table", { class: "data" },
+      el("thead", {}, el("tr", {}, el("th", {}, "Name"), el("th", {}, "Ingredients"), el("th", {}))),
+      el("tbody", {}, ...rows),
+    )),
+    el("p", { class: "hint" }, "A mix is defined by its components — recipes scale it proportionally, so the total does not have to reach 1000 g."),
   );
 }
 
@@ -145,89 +157,83 @@ const recipeCards = (state: AppState): RecipeCard[] =>
     })
     .sort(byName);
 
-const deleteRecipe = (ctx: ViewCtx, id: string, name: string): void => {
-  if (!askConfirm(`Delete recipe "${name}"? Its ingredient and mix links are removed as well.`)) return;
-  runAction(ctx.app.repo.deleteRecipe(id)).then((done) => { if (!done) return; toast(`Deleted ${name}.`); void ctx.refresh(); });
-};
-
-const duplicateRecipe = (ctx: ViewCtx, id: string): void => {
-  runUi(ctx.app.repo.duplicateRecipe(id)).then((rows) => { if (rows?.[0]) ctx.navigate(`/recipe-edit?id=${String(rows[0].cols.id)}`); });
-};
-
+/** Landing grid — same cards as the old app's home page, now clickable anywhere. */
 export function renderRecipesGrid(ctx: ViewCtx, mountPoint: HTMLElement): void {
   const cards = recipeCards(ctx.state);
 
   clear(mountPoint);
   mountPoint.append(
     el("div", { class: "page-head" },
-      el("h2", {}, `Recipes (${cards.length})`),
-      el("div", {}, el("a", { class: "btn ghost small", href: "/recipes" }, "table view →"), " ", el("a", { class: "btn primary", href: "/recipes/new" }, "+ New recipe")),
+      el("h2", {}, "All Recipes"),
+      el("div", { class: "links" }, el("a", { class: "plain", href: "/recipes" }, "table view →"), " ", el("a", { class: "create", href: "/recipes/new" }, "+ New Recipe")),
     ),
   );
 
-  if (cards.length === 0) {
-    mountPoint.append(el("section", { class: "panel" }, el("p", { class: "muted" }, "No recipes stored on this device yet.")));
-    return;
-  }
+  if (cards.length === 0) { mountPoint.append(emptyMessage("No recipes yet.")); return; }
 
-  mountPoint.append(el("section", { class: "cards" }, ...cards.map((card) => {
-    const chip = categoryChip(ctx.state, card.category_id);
-    return el("article", { class: "card" },
-      el("a", { class: "name", href: `/recipe?id=${card.id}` }, card.name),
-      ...(chip ? [el("div", { class: "meta" }, chip)] : []),
+  const nodes = cards.map((card) => {
+    const article = el("article", { class: "card" },
+      el("h3", {}, card.name),
       el("div", { class: "meta" },
-        el("span", {}, `${card.servings} serving${card.servings === 1 ? "" : "s"}`),
-        el("span", {}, pct(card.hydration)),
-        el("span", {}, `${Math.round(card.flourWeight)} g flour`),
+        el("span", {}, `Servings: ${card.servings}`),
+        el("span", {}, `Hydration: ${card.hydration.toFixed(0)}%`),
       ),
-      el("div", { class: "meta" }, el("span", {}, euro(card.cost)), el("span", {}, `${Math.round(card.calories)} kcal`)),
-      el("div", { class: "actions" },
-        el("a", { class: "btn small", href: `/recipe-edit?id=${card.id}` }, "edit"),
-        el("button", { class: "small" }, "duplicate"),
-        el("button", { class: "small danger" }, "delete"),
+      el("div", { class: "meta sub" },
+        el("span", {}, euro(card.cost)),
+        el("span", {}, `${Math.round(card.flourWeight)} g flour · ${Math.round(card.calories)} kcal`),
       ),
     );
-  })));
-
-  // wire the two buttons per card (kept out of `el` so handlers stay typed)
-  const nodes = mountPoint.querySelectorAll(".card");
-  cards.forEach((card, index) => {
-    const cardNode = nodes[index];
-    if (!cardNode) return;
-    const [dupButton, delButton] = [...cardNode.querySelectorAll("button")];
-    dupButton?.addEventListener("click", () => duplicateRecipe(ctx, card.id));
-    delButton?.addEventListener("click", () => deleteRecipe(ctx, card.id, card.name));
+    clickable(article, () => ctx.navigate(`/recipes/${card.id}`), card.name);
+    return article;
   });
+
+  mountPoint.append(el("section", { class: "cards" }, ...nodes));
 }
 
+/** Table view of the same recipes (this is where edit / duplicate / delete live, as before). */
 export function renderRecipesTable(ctx: ViewCtx, mountPoint: HTMLElement): void {
   const cards = recipeCards(ctx.state);
 
   clear(mountPoint);
   mountPoint.append(
     el("div", { class: "page-head" },
-      el("h2", {}, `Recipes (${cards.length})`),
-      el("div", {}, el("a", { class: "btn ghost small", href: "/" }, "grid view →"), " ", el("a", { class: "btn primary", href: "/recipes/new" }, "+ New recipe")),
-    ),
-    el("section", { class: "panel" },
-      cards.length === 0
-        ? el("p", { class: "muted" }, "No recipes stored on this device yet.")
-        : el("table", { class: "data" },
-          el("thead", {}, el("tr", {}, el("th", {}, "Name"), el("th", {}, "Category"), el("th", {}, "Servings"), el("th", {}, "Hydration"), el("th", { class: "num" }, "Flour"), el("th", { class: "num" }, "Cost"), el("th", {}, ""))),
-          ...cards.map((card) => el("tr", {},
-            cell(card.name), categoryChip(ctx.state, card.category_id) ?? cell("—", "category"), cell(String(card.servings), "servings"), cell(pct(card.hydration), "hydration"),
-            cell(`${Math.round(card.flourWeight)} g`, "flour", "num"), cell(euro(card.cost), "cost", "num"),
-            el("td", {}, actions([
-              ["edit", "", () => ctx.navigate(`/recipe-edit?id=${card.id}`)],
-              ["duplicate", "", () => duplicateRecipe(ctx, card.id)],
-              ["delete", "danger", () => deleteRecipe(ctx, card.id, card.name)],
-            ])),
-          )),
-        ),
+      el("h2", {}, "All Recipes"),
+      el("div", { class: "links" }, el("a", { class: "plain", href: "/" }, "grid view →"), " ", el("a", { class: "create", href: "/recipes/new" }, "+ New Recipe")),
     ),
   );
+
+  if (cards.length === 0) { mountPoint.append(emptyMessage("No recipes yet.")); return; }
+
+  const rows = cards.map((card) => {
+    const nameCell = el("td", { class: "name" }, card.name);
+    const chip = categoryChip(ctx.state, card.category_id);
+    if (chip) nameCell.append(" ", chip);
+
+    const tr = el("tr", {},
+      nameCell,
+      cell(String(card.servings), "dim"),
+      cell(`${card.hydration.toFixed(0)}%`, "dim"),
+      el("td", {}, actions([
+        ["edit", "", () => ctx.navigate(`/recipes/${card.id}/edit`)],
+        ["duplicate", "", () => runUi(ctx.app.repo.duplicateRecipe(card.id)).then((rows) => { if (rows?.[0]) ctx.navigate(`/recipes/${String(rows[0].cols.id)}`); })],
+        ["delete", "danger", () => {
+          if (!askConfirm(`Delete recipe "${card.name}"? Its ingredient and mix links are removed as well.`)) return;
+          runAction(ctx.app.repo.deleteRecipe(card.id)).then((done) => { if (!done) return; toast(`Deleted ${card.name}.`); void ctx.refresh(); });
+        }]]),
+      ),
+    );
+    clickable(tr, () => ctx.navigate(`/recipes/${card.id}`), card.name);
+    return tr;
+  });
+
+  mountPoint.append(el("div", { class: "table-wrap" }, el("table", { class: "data" },
+    el("thead", {}, el("tr", {}, el("th", {}, "Name"), el("th", {}, "Servings"), el("th", {}, "Hydration"), el("th", {}))),
+    el("tbody", {}, ...rows),
+  )));
 }
 
-/** Used by the detail page header. */
-export const ingredientBadge = (ing: Ingredient): HTMLElement =>
-  el("span", { class: `badge ${ing.category}` }, ing.category);
+/** Used by the recipe form's pickers. */
+export const ingredientLabel = (state: AppState, id: string): string => {
+  const i = state.ingredients.get(id);
+  return i ? `${i.name} (${i.category}, €${i.price.toFixed(2)}/kg)` : id;
+};

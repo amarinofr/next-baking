@@ -35,7 +35,7 @@ Source (`backend/`, `frontend/src/`, configs), docs (`PLAN.md`, `PROGRESS.md`, `
 Two notes on that copy:
 
 - SQLite sidecar files (`*-wal`, `*-shm`) were **not** copied — they are transient. Their content was captured properly instead by the online-backup API used for `snapshots/`, which folds the write-ahead log into a consistent `.db` file. So the databases inside `legacy-baking/` are point-in-time copies, and `snapshots/*.db` are the authoritative safe copies.
-- Because `legacy-baking/.git` came along, git treats it as a nested repository: this project records which commit it points at, and never rewrites its contents. Its working tree still shows *your own* pre-existing uncommitted changes (same as `../baking` has) — nothing here wrote to either tree.
+- Because `legacy-baking/.git` came along, git first saw it as a nested repository. This project now **does not track it at all**: it is listed in `.gitignore`, so the new repository contains only the new app, and your old app's history stays out of it. The copy remains on disk for diffing/blaming locally (`cd legacy-baking && git status`). Its working tree still shows *your own* pre-existing uncommitted changes (same as `../baking` has) — nothing here wrote to either tree.
 
 Nothing in `legacy-baking/` is executed by this project. It exists so that a mistake here can never reach the real thing.
 
@@ -73,7 +73,8 @@ cd ~/projects/apps/next-baking-app && npm run snapshot
 
 Only these places, all inside `next-baking-app/`:
 
-- `data/app.db` (+ `-wal`/`-shm`) — the hub's SQLite store; created from the read-only hot copy above. Migration is **additive only**: it adds `updated_at`, `deleted`, `origin` columns and a `sync_meta` table. It never drops, renames or reparses existing columns, and it leaves tables it does not model (`recipe_categories`, the legacy `price_unit` column) exactly as they were.
+- `data/app.db` (+ `-wal`/`-shm`) — the hub's SQLite store; created from the read-only hot copy above. Migration is **additive only**: it adds `updated_at`, `deleted`, `origin` columns, a `sync_meta` table, and a `UNIQUE` index on each legacy link table (which had none). It never drops, renames or reparses existing columns or values — including `price_unit`, `category_id`, `recipe_categories` and timestamps exactly as written by the Go backend.
+  The hub opens this replica with `PRAGMA foreign_keys = OFF`: row-level replication can deliver a link row before its parent recipe arrives from another device, and enforcing inherited FKs would either fail the write or force us to delete a real row. Nothing is ever deleted here because of a missing parent; integrity is kept by the app layer and rebuilt on export.
 - `public/seed/state.json` — generated from `data/app.db` at build time.
 - `exports/legacy-compat-*.db` — rollback file in the *original* schema.
 - Each browser's IndexedDB (per device).
@@ -86,7 +87,9 @@ The new app has **no code path** that points at `../baking/**`. The only tool th
 
 | Situation | Do this |
 |---|---|
-| You want today's edits from the old app inside the new one | `npm run snapshot -- --refresh` then `npm run build` |
+| You want today's edits from the old app inside the new one | `npm run snapshot` then `npm run refresh` (merges newest snapshot in, last-write-wins, deletes nothing) then `npm run build` |
+| You want to be sure nothing was lost | `npm run verify:data` — compares every row against the newest snapshot of your original database |
+| You want proof the rollback file is faithful | compare it yourself: `sqlite3 exports/legacy-compat-*.db "SELECT * FROM ingredients;"` vs the same query on `../baking/data/app.db` — they match row-for-row |
 | You want the new app's data back in the Go app | `npm run export:legacy` → overwrite the old app's DB with `exports/legacy-compat-*.db` (after backing that file up yourself) |
 | Something here went wrong | restore from a snapshot: `cp snapshots/<name>.<stamp>.db data/app.db` |
 | You want to see what changed vs your repo | `cd legacy-baking && git status` / `git diff` (the history is in the copy) |
@@ -115,11 +118,15 @@ Nothing below touched `../baking/**`; each change was applied to this app's own 
 | Problem found | What was done here |
 |---|---|
 | The legacy link tables have no primary key or unique index, so replication inserted the same link over and over | one row per composite key (last write wins) + `UNIQUE` index added when the hub starts (`enforceLinkTableKeys`) |
-| One pre-existing dangling `recipe_main_liquids` row made sync fail with `FOREIGN KEY constraint failed` on every device | the orphan row was pruned **from this project's copy only**, and the hub now skips any incoming child row whose parent does not exist instead of erroring |
+| One pre-existing dangling `recipe_main_liquids` row made sync fail with `FOREIGN KEY constraint failed` on every device | the hub replica now runs with foreign keys off (see §3), so out-of-order replication cannot fail or lose a row. An earlier version of this project *pruned* such rows — that pruning was removed, because pruning a child whose parent has simply not arrived yet deletes genuine data. `/api/info` now reports dangling links as a diagnostic without touching them |
 | A background pull could resurrect a row that had just been edited or deleted locally (equal timestamp + same device counted as "win") | last-write-wins is now strict: an identical version is never re-applied, and remote rows are merged inside a single IndexedDB transaction (`store.mergeRemote`) — covered by a unit test |
 | `price_unit` (ingredients) and `category_id` / `recipe_categories` existed in your database but not in the new model, so saving a row blanked them | both columns are modelled, replicated, preserved on edit, and shown/edited in the UI — covered by a unit test |
 | Deletes removed the row from storage but the list kept showing it (a `void` success looked like a failure) | view actions now use a success-aware runner and refresh + confirm with a message |
 | A background sync could re-render a page under a half-filled form and lose what you typed | form values are captured before every re-render and restored after it; on form pages an incoming update is announced instead of applied to the DOM |
+| Saving something appeared to do nothing: the list still showed the old state until a full page reload | every navigation re-reads the local database before drawing (`loadStateAndRender`), so saved rows show up immediately while still never reloading the page |
+| Legacy timestamps were being prettified on import (`2026-04-11 21:19:58 +0000 +00` → ISO with `T`/`Z`) | `normalizeRow` keeps `created_at` byte-for-byte as your database stores it |
+| A device could advance its cursor past a row written on the hub mid-request | the cursor now only advances over changes the device actually received (`max(local updated_at, previous cursor)`, never the hub's clock) |
+| The legacy export omitted `price_unit`, `category_id` and `recipe_categories` | `scripts/export-legacy-db.ts` mirrors your live schema exactly, writes categories before recipes so FK checks pass, and turns empty `category_id` into NULL like the Go app does |
 
 Re-verify originals at any time:
 

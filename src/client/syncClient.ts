@@ -65,7 +65,9 @@ export function syncNow(store: Store, deviceId: string): Effect.Effect<SyncOutco
     const applied = yield* store.mergeRemote(remote);
 
     const merged = yield* store.allRecords();
-    const nextCursor = Math.max(maxUpdatedAt(merged), Number(response.cursor ?? cursor) || 0);
+    // Never advance past what this device has actually seen. Trusting the hub's wall clock could
+    // skip a row that landed on the hub while this very request was in flight.
+    const nextCursor = Math.max(maxUpdatedAt(merged), cursor);
     yield* store.setMeta(CURSOR_KEY, String(nextCursor));
 
     return { pushed: outbox.length, applied, cursor: nextCursor, hubUrl };

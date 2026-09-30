@@ -6,8 +6,11 @@
  * legacy-baking/frontend/src/pages/recipes/[id]/index.astro.
  *
  * Semantics preserved deliberately (do not "fix" without checking with the user):
- *  - The hydration base is **flour coming from flour mixes only** (mix components),
- *    scaled by the grams of mix the recipe uses: comp.amount * mixAmount / 1000.
+ *  - The hydration base is **flour coming from flour mixes only** (mix components).
+ *    A mix is defined by whatever its components add up to — call it the batch — and a
+ *    recipe scales it proportionally: comp.amount * mixAmount / batchGrams. So a mix whose
+ *    components total 703 g behaves exactly like one totalling 1000 g; you never have to
+ *    top a mix up to 1000 g for recipes to work.
  *  - Hydration % is a baker's percentage of that flour weight.
  *  - Main liquid target = flourWeight × hydration% / 100. Hybrid/liquid ingredient
  *    water is **additive** (shown separately, it does NOT reduce the main liquid).
@@ -125,9 +128,14 @@ const addNutrition = (n: Nutrition, factor: number, i: IngredientLike): Nutritio
   return n;
 };
 
-/** Mix components are stored per 1000 g of mix → scale to the grams actually used. */
+/** Grams a mix's own components add up to (its "batch"). Falls back to 1000 when empty. */
+export const mixBatchGrams = (components: ReadonlyArray<{ amount_per_kg: number }>): number =>
+  components.reduce((sum, c) => sum + (Number(c.amount_per_kg) || 0), 0);
+
+/** Components are grams *within the mix's own batch* → scale to the grams the recipe uses. */
 export function scaleMixComponents(mix: MixUse): ScaledComponent[] {
-  const factor = mix.amount / 1000;
+  const batch = mixBatchGrams(mix.components);
+  const factor = mix.amount / (batch > 0 ? batch : 1000);
   return mix.components.map((c) => ({
     ingredient_id: c.ingredient_id,
     name: c.name,
@@ -280,9 +288,13 @@ export function summarizeRecipe(input: RecipeMathInput): RecipeSummary {
   return { total_cost: t.total_cost, calories: t.nutrition.calories, flour_weight: t.flour_weight_from_mixes, total_weight: t.total_weight };
 }
 
-/** Cost of 1000 g of a flour mix, from its components (grams per kg × €/kg-of-ingredient). */
-export const mixCostPerKg = (components: ReadonlyArray<{ amount: number; price: number }>): number =>
-  components.reduce((sum, c) => sum + (c.amount * (c.price ?? 0)) / 1000, 0);
+/** Cost of 1 kg of a flour mix, whatever its components happen to total. */
+export const mixCostPerKg = (components: ReadonlyArray<{ amount: number; price: number }>): number => {
+  const batch = components.reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
+  if (batch <= 0) return 0;
+  const batchCost = components.reduce((sum, c) => sum + (c.amount * (c.price ?? 0)) / 1000, 0);
+  return (batchCost / batch) * 1000;
+};
 
 /** Nutrition totals of 100 g of a flour mix. */
 export const mixNutritionPer100g = (

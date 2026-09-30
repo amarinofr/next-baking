@@ -12,7 +12,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -53,10 +53,22 @@ const rowsOf = (db: string, spec: { table: string; keys: string[]; columns: stri
 const newestSnapshot = (): string => {
   const dir = join(ROOT, "snapshots");
   const candidates = existsSync(dir)
-    ? readdirSync(dir).filter((name) => /^baking-data.*\.db$/.test(name)).sort()
+    ? readdirSync(dir).filter((name) => /^baking-data.*\.db$/.test(name)).map((name) => join(dir, name))
     : [];
-  if (candidates.length === 0) throw new Error("no snapshot found — run `npm run snapshot` first");
-  return join(dir, candidates[candidates.length - 1]!);
+
+  // Newest by modification time, and only snapshots that actually contain data: some runs
+  // backed up empty legacy copies, and comparing against one of those proves nothing.
+  const dated = candidates.filter((path) => !path.endsWith("-wal") && !path.endsWith("-shm"));
+  const nonEmpty = dated.filter((path) => {
+    try {
+      const out = execFileSync("sqlite3", [`file:${path}?mode=ro`, "SELECT COUNT(*) FROM ingredients;"], { encoding: "utf8" }).trim();
+      return Number(out) > 0;
+    } catch { return false; }
+  });
+
+  const pick = nonEmpty.sort((a, b) => statSync(a).mtimeMs - statSync(b).mtimeMs).pop();
+  if (!pick) throw new Error("no usable snapshot found — run `npm run snapshot` first");
+  return pick;
 };
 
 /where a row's parent is missing in the original itself => we intentionally do not copy it/

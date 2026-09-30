@@ -1,8 +1,8 @@
-/** Recipe single page: read-only view with a servings scaler (never writes). */
+/** One recipe: the same breakdown as the original app, with a servings scaler that never writes. */
 
 import { buildRecipeView, type RecipeMathInput } from "../../domain/calc.ts";
 import { recipeMathInput } from "../../domain/state.ts";
-import { askConfirm, clear, el, euro, grams, num, pct, runAction, runUi, toast } from "../dom.ts";
+import { askConfirm, clear, el, euro, grams, num, pct, runAction, toast } from "../dom.ts";
 import { categoryChip, type ViewCtx } from "./context.ts";
 
 export function renderRecipeDetail(ctx: ViewCtx, mountPoint: HTMLElement, id: string): void {
@@ -12,106 +12,127 @@ export function renderRecipeDetail(ctx: ViewCtx, mountPoint: HTMLElement, id: st
   const input: RecipeMathInput | undefined = recipeMathInput(ctx.state, id);
   if (!input) { mountPoint.append(el("p", { class: "notice err" }, "Recipe links are incomplete.")); return; }
 
-  const scaleInput = el("input", { type: "number", min: "1", max: "99", value: String(recipe.servings) }) as HTMLInputElement;
-
-  const body = el("div", { class: "stack" });
+  const scaleInput = el("input", { id: "scale-input", class: "tiny", type: "number", min: "1", max: "100", value: String(recipe.servings) }) as HTMLInputElement;
+  const body = el("div");
 
   const draw = (): void => {
     const target = Math.max(1, Math.trunc(Number(scaleInput.value) || recipe.servings));
     const view = buildRecipeView(input, target);
-
     clear(body);
-    const chip = categoryChip(ctx.state, recipe.category_id);
+
     body.append(
-      ...(chip ? [el("p", { class: "small muted" }, "Category: ", chip)] : []),
-      el("section", { class: "panel inline-fields" },
-        el("div", { class: "field" }, el("label", { for: "scale" }, `Servings (recipe makes ${recipe.servings})`), scaleInput),
-        el("p", { class: "small muted nowrap" }, `scaling ×${num(view.scale, 2)} · nothing is written to the database`),
+      // Servings
+      el("div", { class: "search-row" },
+        el("label", { for: "scale-input", class: "plain" }, "Servings:"),
+        scaleInput,
+        el("span", { class: "hint" }, `(recipe makes ${recipe.servings}) · scaling ×${num(view.scale, 2)}, nothing is saved`),
       ),
 
-      el("div", { class: "grid cols-2" },
+      el("div", { class: "grid-side" },
+        // Ingredients (the wide panel)
         el("section", { class: "panel" },
-          el("h3", {}, "Flour mixes"),
-          ...(view.mixes.length === 0 ? [el("p", { class: "muted" }, "none")] : view.mixes.map((mix) => el("div", {},
-            el("p", {}, `${mix.name}: `, el("b", {}, grams(mix.amount))),
-            el("div", { class: "sub-list" }, ...mix.components.map((c) => el("span", {}, `${c.name}: ${grams(c.amount)}`))),
-          ))),
-          el("hr", { class: "sep" }),
-          el("h3", {}, "Dry ingredients"),
-          ...(view.dry_ingredients.length === 0 ? [el("p", { class: "muted" }, "none")] : view.dry_ingredients.map((i) => el("p", {}, `${i.name}: `, el("b", {}, grams(i.amount))))),
+          el("h3", {}, "Ingredients"),
+
+          ...(view.mixes.length > 0 ? [
+            el("p", { class: "label-upper" }, "Flour Mixes"),
+            ...view.mixes.flatMap((mix) => [
+              el("p", { class: "line" }, `${mix.name} — `, el("b", {}, grams(mix.amount))),
+              ...(mix.components.length === 0 ? [] : [el("ul", { class: "sub" }, ...mix.components.map((c) => el("li", {}, `— ${c.name}: `, el("b", {}, grams(c.amount)))))]),
+            ]),
+          ] : []),
+
+          ...(view.dry_ingredients.length > 0 ? [
+            el("p", { class: "label-upper" }, "Dry Ingredients"),
+            ...view.dry_ingredients.map((ing) => el("p", { class: "line" }, el("span", {}, `${ing.name}: `), el("b", {}, grams(ing.amount)))),
+          ] : []),
+
+          ...(view.mixes.length === 0 && view.dry_ingredients.length === 0 ? [el("p", { class: "hint" }, "None")] : []),
         ),
 
+        // Hydration breakdown (the narrow panel)
         el("section", { class: "panel" },
-          el("h3", {}, `Hydration (${pct(input.hydration_percent)})`),
-          kvRow("Flour weight (from mixes)", grams(view.flour_weight_from_mixes)),
-          kvRow(`Target water (${pct(input.hydration_percent)})`, grams(view.target_water)),
-          kvRow("Water from liquid/hybrid ingredients", grams(view.water_from_liquids)),
-          ...view.liquid_ingredients.map((i) => el("div", { class: "sub-list" },
-            el("span", {}, `${i.name}: ${grams(i.amount)}${i.category === "hybrid" ? ` (${pct(i.hybrid_water * 100)} water → ${grams(i.amount * i.hybrid_water)})` : ""}`),
-          )),
-          ...(view.main_liquids.length > 0 ? [el("hr", { class: "sep" }), el("h3", {}, "Main liquids to weigh out")] : []),
-          ...view.main_liquids.map((m) => kvRow(`${m.name} (${pct(m.percentage)})`, grams(m.amount))),
-          Math.abs(view.main_liquid_percentage_total - 100) > 0.01 && view.main_liquid_percentage_total > 0
-            ? el("p", { class: "notice" }, `Main liquids total ${pct(view.main_liquid_percentage_total)} — should be 100%`) : null,
+          el("h3", {}, `Hydration (${recipe.hydration_percent.toFixed(0)}%)`),
+          el("p", { class: "line" }, "Flour weight: ", el("b", {}, grams(view.flour_weight_from_mixes))),
+          el("p", { class: "line" }, `Target water (${recipe.hydration_percent.toFixed(0)}%): `, el("b", {}, grams(view.target_water))),
+          el("p", { class: "line" }, "Water from liquids: ", el("b", {}, grams(view.water_from_liquids))),
+
+          ...(view.liquid_ingredients.length > 0 ? [
+            el("p", { class: "label-upper" }, "─ Liquids ─"),
+            el("ul", { class: "sub" }, ...view.liquid_ingredients.map((ing) => ing.category === "hybrid"
+              ? el("li", {}, `— ${ing.name}: `, el("b", {}, grams(ing.amount)), el("span", { class: "note" }, ` (${pct(ing.hybrid_water * 100)} water → ${grams(ing.amount * ing.hybrid_water)})`))
+              : el("li", {}, `— ${ing.name}: `, el("b", {}, grams(ing.amount))))),
+          ] : []),
+
+          ...(view.main_liquids.length > 0 ? [
+            el("p", { class: "label-upper" }, "─ Main liquids ─"),
+            el("ul", { class: "sub" }, ...view.main_liquids.map((m) => el("li", {}, `— ${m.name}: `, el("b", {}, grams(m.amount)), ` (${pct(m.percentage)})`))),
+          ] : []),
+
+          ...(view.main_liquid_percentage_total > 0 && Math.abs(view.main_liquid_percentage_total - 100) > 0.01
+            ? [el("p", { class: "notice" }, `Main liquids total ${pct(view.main_liquid_percentage_total)} — should add up to 100%.`)]
+            : []),
+
           el("hr", { class: "sep" }),
-          kvRowTotal("Total liquid", grams(view.total_liquid)),
-          kvRow("Effective hydration", pct(view.effective_hydration_percent)),
+          el("p", { class: "total-line" }, "Total liquid: ", el("b", {}, grams(view.total_liquid))),
+          el("p", { class: "line" }, "Effective hydration: ", el("b", {}, `${view.effective_hydration_percent.toFixed(1)}%`)),
         ),
       ),
 
-      el("div", { class: "grid cols-2" },
+      // Per serving + price
+      el("div", { class: "grid-two" },
         el("section", { class: "panel" },
-          el("h3", {}, "Nutrition per serving"),
-          kvRow("Energy", `${num(view.nutrition_per_serving.calories, 0)} kcal`),
-          kvRow("Protein", `${num(view.nutrition_per_serving.protein)} g`),
-          kvRow("Fats", `${num(view.nutrition_per_serving.fats)} g`),
-          kvRow("Carbs", `${num(view.nutrition_per_serving.carbs)} g`),
-          kvRow("Sugar", `${num(view.nutrition_per_serving.sugar)} g`),
-          kvRow("Fiber", `${num(view.nutrition_per_serving.fiber)} g`),
-          el("hr", { class: "sep" }),
-          kvRow("Per 100 g of dough — energy", `${num(view.nutrition_per_100g.calories, 0)} kcal`),
-          kvRow("Per 100 g — P/F/C", `${num(view.nutrition_per_100g.protein)}/${num(view.nutrition_per_100g.fats)}/${num(view.nutrition_per_100g.carbs)} g`),
+          el("h3", {}, "Per Serving"),
+          el("div", { class: "kv" },
+            el("span", {}, "Calories"), el("b", {}, num(view.nutrition_per_serving.calories, 0)),
+            el("span", {}, "Protein"), el("b", {}, `${num(view.nutrition_per_serving.protein)} g`),
+            el("span", {}, "Fats"), el("b", {}, `${num(view.nutrition_per_serving.fats)} g`),
+            el("span", {}, "Carbs"), el("b", {}, `${num(view.nutrition_per_serving.carbs)} g`),
+            el("span", {}, "Sugar"), el("b", {}, `${num(view.nutrition_per_serving.sugar)} g`),
+            el("span", {}, "Fiber"), el("b", {}, `${num(view.nutrition_per_serving.fiber)} g`),
+            el("span", { class: "sub full" }, `per 100 g of dough: ${num(view.nutrition_per_100g.calories, 0)} kcal · ${num(view.nutrition_per_100g.protein)}/${num(view.nutrition_per_100g.fats)}/${num(view.nutrition_per_100g.carbs)} g`),
+          ),
         ),
         el("section", { class: "panel" },
           el("h3", {}, "Price"),
-          kvRowTotal(`Whole recipe (${target} servings)`, euro(view.total_cost)),
-          kvRow("Per serving", euro(view.cost_per_serving)),
+          el("p", { class: "line" }, "Total: ", el("b", {}, euro(view.total_cost))),
+          el("p", { class: "line" }, "Per serving: ", el("b", {}, euro(view.cost_per_serving))),
         ),
       ),
 
-      ...(recipe.instructions.trim() ? [el("section", { class: "panel" }, el("h3", {}, "Instructions"), el("p", { style: "white-space: pre-wrap" }, recipe.instructions))] : []),
+      el("div", { class: "right" }, deleteButton()),
     );
   };
 
-  function kvRow(label: string, value: string): HTMLElement {
-    const wrap = el("div", { class: "kv" }, el("span", {}, label), el("b", {}, value));
-    return wrap;
-  }
-  function kvRowTotal(label: string, value: string): HTMLElement {
-    return el("div", { class: "kv total" }, el("span", {}, label), el("b", {}, value));
-  }
+  const deleteButton = (): HTMLElement => {
+    const button = el("button", { class: "danger-solid", type: "button" }, "Delete Recipe");
+    button.addEventListener("click", () => {
+      if (!askConfirm(`Delete recipe "${recipe.name}"? Its ingredient and mix links are removed as well.`)) return;
+      runAction(ctx.app.repo.deleteRecipe(recipe.id)).then((done) => { if (!done) return; toast(`Deleted ${recipe.name}.`); ctx.navigate("/recipes"); });
+    });
+    return button;
+  };
 
+  scaleInput.addEventListener("input", draw);
   scaleInput.addEventListener("change", draw);
 
-  const editLink = el("a", { class: "btn small", href: `/recipe-edit?id=${id}` }, "Edit");
-  const duplicateButton = el("button", { class: "small" }, "Duplicate");
-  duplicateButton.addEventListener("click", () => runUi(ctx.app.repo.duplicateRecipe(id)).then((rows) => { if (rows?.[0]) ctx.navigate(`/recipe-edit?id=${String(rows[0].cols.id)}`); }));
-  const deleteButton = el("button", { class: "danger small" }, "Delete recipe");
-  deleteButton.addEventListener("click", () => {
-    if (!askConfirm(`Delete recipe "${recipe.name}"?`)) return;
-    runAction(ctx.app.repo.deleteRecipe(id)).then((done) => { if (done) ctx.navigate("/recipes"); });
-  });
-
   clear(mountPoint);
+
+  const heading = el("h2", {}, recipe.name);
+  const chip = categoryChip(ctx.state, recipe.category_id);
+  if (chip) heading.append(" ", chip);
+
   mountPoint.append(
     el("div", { class: "page-head" },
-      el("h2", {}, recipe.name),
-      el("div", { class: "row-actions" , style: "opacity:1" }, editLink, duplicateButton, deleteButton, el("a", { class: "btn ghost small", href: "/recipes" }, "all recipes")),
+      heading,
+      el("div", { class: "links" },
+        el("button", { class: "primary", type: "button" }, "Edit"),
+        el("a", { class: "plain", href: "/recipes" }, "All Recipes"),
+      ),
     ),
     body,
   );
 
-  if (!ctx.state.recipes.get(id)) toast("missing recipe", "warn");
+  mountPoint.querySelector<HTMLButtonElement>(".page-head button")?.addEventListener("click", () => ctx.navigate(`/recipes/${recipe.id}/edit`));
+
   draw();
 }
-

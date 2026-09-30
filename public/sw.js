@@ -1,6 +1,6 @@
 /* next-baking-app service worker — app shell + data snapshots stay usable offline. */
 const VERSION = "next-baking-v1";
-const SHELL = ["/", "/recipes", "/ingredients", "/mixes", "/settings", "/seed/state.json", "/manifest.webmanifest"];
+const SHELL = ["/", "/recipes", "/ingredients", "/mixes", "/settings", "/seed/state.json", "/manifest.webmanifest", "/icons/icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
@@ -37,7 +37,8 @@ self.addEventListener("fetch", (event) => {
         return fresh;
       } catch {
         const cached = await caches.match(request, { ignoreSearch: false });
-        return cached ?? (await caches.match("/")) ?? new Response("Offline and page not cached yet.", { status: 503 });
+        // any in-app route falls back to the shell; the client router draws the right view from the URL
+        return cached ?? (await caches.match("/")) ?? new Response("Offline and this page is not cached yet.", { status: 503 });
       }
     })());
     return;

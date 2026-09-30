@@ -1,52 +1,62 @@
 ---
 import "../styles.css";
 
-interface Props { readonly title?: string; readonly page?: string; readonly dataId?: string }
+interface Props { readonly title?: string; readonly page?: string }
 
-const { title = "Baking", page = "recipes", dataId } = Astro.props;
+const { title = "Recipes", page = "home" } = Astro.props;
 
+// Same tabs, same labels, same order as the original app (Sync is the only addition).
 const tabs = [
   { id: "ingredients", label: "Ingredients", href: "/ingredients" },
   { id: "mixes", label: "Flour Mixes", href: "/mixes" },
   { id: "recipes", label: "Recipes", href: "/" },
   { id: "settings", label: "Sync", href: "/settings" },
 ];
+
+const activeFor = (id: string): boolean =>
+  id === "recipes" ? page === "home" || page === "recipes" || page === "recipe-detail" || page === "recipe-form"
+    : id === "ingredients" ? page === "ingredients" || page === "ingredient-form"
+      : id === "mixes" ? page === "mixes" || page === "mix-form"
+        : page === id;
 ---
 
 <!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0a0a0a" />
-    <meta name="description" content="Offline-first baking recipes app." />
+    <meta name="color-scheme" content="dark" />
+    <meta name="description" content="Offline-first baking recipes, flour mixes and hydration maths." />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
-    <title>{title} · next-baking</title>
+    <title>{title} — Baking Recipes</title>
   </head>
   <body data-page={page}>
     <header class="top">
-      <div class="brand"><b>next-baking</b> · offline recipes</div>
+      <h1>Baking Recipes App</h1>
       <nav class="tabs" aria-label="Sections">
         {tabs.map((tab) => (
-          <a href={tab.href} aria-current={tab.id === page ? "page" : undefined}>[{tab.label}]</a>
+          <a href={tab.href} data-tab={tab.id} aria-current={activeFor(tab.id) ? "page" : undefined}>[{tab.label}]</a>
         ))}
       </nav>
     </header>
 
-    <main id="app" class="stack">
-      <noscript><p class="notice">This app stores your recipes locally in the browser — enable JavaScript to use it.</p></noscript>
+    <main id="app">
+      <noscript><p class="notice">This app keeps your recipes in this browser — enable JavaScript to use it.</p></noscript>
       <slot />
     </main>
 
     <footer class="status">
-      <span id="status-left">loading local database…</span>
+      <span id="status-left">opening local database…</span>
       <span id="status-right"></span>
     </footer>
 
+    <div id="toasts" aria-live="polite"></div>
+
     <script is:inline>
-      if ("serviceWorker" in navigator && !location.hostname.startsWith("localhost.") ) {
+      if ("serviceWorker" in navigator) {
         window.addEventListener("load", () => { navigator.serviceWorker.register("/sw.js").catch(() => {}); });
       }
     </script>

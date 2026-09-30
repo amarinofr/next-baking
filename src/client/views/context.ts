@@ -10,7 +10,10 @@ export interface ViewCtx {
   readonly state: AppState;
   /** re-read IndexedDB and re-render the current page */
   readonly refresh: () => Promise<void>;
+  /** soft navigation: no page reload, state is kept */
   readonly navigate: (path: string) => void;
+  /** tell the scheduler something changed locally so it pushes shortly after */
+  readonly markChanged: () => void;
 }
 
 /** Recipe categories come straight from your original database. */

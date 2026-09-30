@@ -1,10 +1,11 @@
-/** Page bootstrap: boots the local store once, then renders the requested view. */
+/** App bootstrap + in-app router: one boot, then views swap without ever reloading the page. */
 
 import { Effect } from "effect";
 import { boot, reloadState, type AppHandle } from "./app.ts";
 import type { AppState } from "../domain/state.ts";
 import { setStatus, toast } from "./dom.ts";
-import { pendingCount, syncNow } from "./syncClient.ts";
+import { pendingCount } from "./syncClient.ts";
+import { makeSyncScheduler } from "./syncScheduler.ts";
 import type { ViewCtx } from "./views/context.ts";
 import { renderIngredients, renderMixes, renderRecipesGrid, renderRecipesTable } from "./views/lists.ts";
 import { renderIngredientForm, renderMixForm } from "./views/formsIngredientMix.ts";
@@ -16,27 +17,53 @@ type PageId =
   | "home" | "recipes" | "ingredients" | "ingredient-form" | "mixes" | "mix-form"
   | "recipe-form" | "recipe-detail" | "settings";
 
-const renderPage = (ctx: ViewCtx, mountPoint: HTMLElement, page: PageId, id?: string): void => {
-  switch (page) {
-    case "home": renderRecipesGrid(ctx, mountPoint); break;
-    case "recipes": renderRecipesTable(ctx, mountPoint); break;
-    case "ingredients": renderIngredients(ctx, mountPoint); break;
-    case "ingredient-form": renderIngredientForm(ctx, mountPoint, id); break;
-    case "mixes": renderMixes(ctx, mountPoint); break;
-    case "mix-form": renderMixForm(ctx, mountPoint, id); break;
-    case "recipe-form": renderRecipeForm(ctx, mountPoint, id); break;
-    case "recipe-detail": if (id) renderRecipeDetail(ctx, mountPoint, id); break;
-    case "settings": renderSettings(ctx, mountPoint); break;
-    default: renderRecipesGrid(ctx, mountPoint);
-  }
+interface Route { readonly page: PageId; readonly id?: string; readonly path: string }
+
+const query = (search: string, key: string): string | undefined => new URLSearchParams(search).get(key) ?? undefined;
+
+/** Clean URLs like the original app (/recipes/<id>, /ingredients/<id>/edit), plus the older ?id= form. */
+export function routeFor(pathname: string, search: string): Route {
+  const path = pathname.replace(/\/+$/, "") || "/";
+  const id = query(search, "id");
+
+  if (path === "/" || path === "/index.html") return { page: "home", path };
+  if (path === "/recipes") return { page: "recipes", path };
+  if (path === "/ingredients") return { page: "ingredients", path };
+  if (path === "/mixes") return { page: "mixes", path };
+  if (path === "/settings") return { page: "settings", path };
+
+  if (path === "/ingredients/new") return { page: "ingredient-form", path };
+  if (path === "/ingredient-edit" && id) return { page: "ingredient-form", id, path };
+
+  if (path === "/mixes/new") return { page: "mix-form", path };
+  if (path === "/mix-edit" && id) return { page: "mix-form", id, path };
+
+  if (path === "/recipes/new") return { page: "recipe-form", path };
+  if (path === "/recipe-edit" && id) return { page: "recipe-form", id, path };
+  if (path === "/recipe" && id) return { page: "recipe-detail", id, path };
+
+  const ingredientEdit = /^\/ingredients\/([^/]+)\/edit$/.exec(path);
+  if (ingredientEdit) return { page: "ingredient-form", id: decodeURIComponent(ingredientEdit[1]!), path };
+
+  const mixEdit = /^\/mixes\/([^/]+)\/edit$/.exec(path);
+  if (mixEdit) return { page: "mix-form", id: decodeURIComponent(mixEdit[1]!), path };
+
+  const recipeEdit = /^\/recipes\/([^/]+)\/edit$/.exec(path);
+  if (recipeEdit) return { page: "recipe-form", id: decodeURIComponent(recipeEdit[1]!), path };
+
+  const recipeView = /^\/recipes\/([^/]+)$/.exec(path);
+  if (recipeView && !["new"].includes(recipeView[1]!)) return { page: "recipe-detail", id: decodeURIComponent(recipeView[1]!), path };
+
+  return { page: "home", path };
+}
+
+const TAB_FOR: Record<PageId, string> = {
+  home: "recipes", recipes: "recipes", "recipe-detail": "recipes", "recipe-form": "recipes",
+  ingredients: "ingredients", "ingredient-form": "ingredients", mixes: "mixes", "mix-form": "mixes", settings: "settings",
 };
 
 export async function startApp(): Promise<void> {
-  const body = document.body;
-  const page = (body.dataset.page ?? "home") as PageId;
-  const id = new URLSearchParams(window.location.search).get("id") ?? body.dataset.id ?? undefined;
   const mountPoint = document.querySelector<HTMLElement>("[data-view]") ?? document.getElementById("app");
-
   if (!mountPoint) return;
 
   setStatus("opening local database…");
@@ -46,109 +73,177 @@ export async function startApp(): Promise<void> {
     app = await Effect.runPromise(boot());
   } catch (error) {
     setStatus("local storage unavailable");
-    toast(`Could not open the local database: ${String((error as Error)?.message ?? error)}. Private browsing mode blocks offline storage.`, "err");
+    toast(`Could not open the local database: ${String((error as Error)?.message ?? error)}. Private browsing blocks offline storage.`, "err");
     return;
   }
 
   let state: AppState = app.state;
+  let route: Route = routeFor(window.location.pathname, window.location.search);
 
-  // A background sync (or a save) can re-render the page while you are still typing.
-  // Form values are therefore captured before every re-render and restored afterwards,
-  // so nothing you typed is ever thrown away.
+  // Form content survives any re-render (background sync, coming back to a page, …).
   const drafts = new Map<string, Record<string, string>>();
-  const draftKey = (which: PageId, whichId?: string): string => `${which}${whichId ? `::${whichId}` : ""}`;
   const fieldNodes = () => [...document.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>("#app form [name]")];
 
   const captureDraft = (): void => {
     if (fieldNodes().length === 0) return;
     const values: Record<string, string> = {};
     for (const node of fieldNodes()) { const name = node.getAttribute("name"); if (name) values[name] = node.value; }
-    drafts.set(draftKey(page, id), values);
+    drafts.set(route.path, values);
   };
 
   const restoreDraft = (): void => {
-    const values = drafts.get(draftKey(page, id));
+    const values = drafts.get(route.path);
     if (!values) return;
     for (const node of fieldNodes()) {
       const name = node.getAttribute("name");
       if (!name || !(name in values)) continue;
       if (node.value === values[name]) continue;
       node.value = values[name]!;
-      node.dispatchEvent(new Event("input", { bubbles: true })); // lets conditional fields (water %, …) catch up
+      node.dispatchEvent(new Event("input", { bubbles: true }));
       node.dispatchEvent(new Event("change", { bubbles: true }));
     }
   };
 
-  const draw = (): void => {
-    captureDraft();
-    const ctx: ViewCtx = {
-      app,
-      state,
-      refresh,
-      navigate: (path: string) => { drafts.delete(draftKey(page, id)); window.location.assign(path); },
-    };
-    renderPage(ctx, mountPoint!, page, id);
-    restoreDraft();
+  const scheduler = makeSyncScheduler({
+    store: app.store,
+    deviceId: app.deviceId,
+    isFormPage: () => route.page === "ingredient-form" || route.page === "mix-form" || route.page === "recipe-form",
+    onApplied: () => { void refresh(); },
+    onStatus: (report, error) => updateStatus(report, error),
+  });
+
+  const titleFor = (): string => {
+    switch (route.page) {
+      case "ingredients": return "Ingredients";
+      case "ingredient-form": return route.id ? "Edit ingredient" : "New ingredient";
+      case "mixes": return "Flour Mixes";
+      case "mix-form": return route.id ? "Edit flour mix" : "New flour mix";
+      case "recipes": return "Recipes";
+      case "recipe-detail": return state.recipes.get(route.id ?? "")?.name ?? "Recipe";
+      case "recipe-form": return route.id ? "Edit recipe" : "New recipe";
+      case "settings": return "Sync & backups";
+      default: return "Recipes";
+    }
   };
 
-  async function refresh(): Promise<void> {
+  const paintChrome = (): void => {
+    document.title = `${titleFor()} — Baking Recipes`;
+    const tab = TAB_FOR[route.page];
+    for (const link of document.querySelectorAll<HTMLAnchorElement>("nav.tabs a[data-tab]")) {
+      if (link.dataset.tab === tab) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current");
+    }
+  };
+
+  const renderView = (): void => {
+    const ctx: ViewCtx = { app, state, refresh, navigate: (path: string) => void go(path), markChanged: () => scheduler.markChanged() };
+    mountPoint!.replaceChildren();
+    switch (route.page) {
+      case "home": renderRecipesGrid(ctx, mountPoint!); break;
+      case "recipes": renderRecipesTable(ctx, mountPoint!); break;
+      case "ingredients": renderIngredients(ctx, mountPoint!); break;
+      case "ingredient-form": renderIngredientForm(ctx, mountPoint!, route.id); break;
+      case "mixes": renderMixes(ctx, mountPoint!); break;
+      case "mix-form": renderMixForm(ctx, mountPoint!, route.id); break;
+      case "recipe-form": renderRecipeForm(ctx, mountPoint!, route.id); break;
+      case "recipe-detail": if (route.id) renderRecipeDetail(ctx, mountPoint!, route.id); break;
+      case "settings": renderSettings(ctx, mountPoint!, scheduler); break;
+    }
+    restoreDraft();
+    paintChrome();
+  };
+
+  /** Re-draw the current route from the in-memory state (used for the very first paint). */
+  const draw = (): void => { captureDraft(); renderView(); };
+
+  /**
+   * Read the local database again, then draw. Every navigation goes through this, otherwise a
+   * row you just saved would stay invisible until a full page reload.
+   */
+  async function loadStateAndRender(): Promise<void> {
     try {
       state = await Effect.runPromise(reloadState(app));
     } catch (error) {
-      toast(`Could not read the local database: ${String((error as Error)?.message ?? error)}`, "err");
+      updateStatus(scheduler.lastSync, `could not read the local database: ${String((error as Error)?.message ?? error)}`);
       return;
     }
-    draw();
+    renderView();
     updateStatus();
   }
 
-  const updateStatus = (): void => {
+  async function refresh(): Promise<void> {
+    captureDraft();          // keep whatever is being typed on a form right now
+    await loadStateAndRender();
+  }
+
+  // ---- scroll memory: coming back to a list puts you where you were ----
+  const scrollMemory = new Map<string, number>();
+
+  const go = async (path: string): Promise<void> => {
+    if (path.startsWith("http") || path.startsWith("//")) { window.location.assign(path); return; }
+    const next = routeFor(path.split("?")[0] ?? "/", path.includes("?") ? path.slice(path.indexOf("?") + 1) : "");
+    if (next.path === route.path) { window.scrollTo({ top: 0, behavior: "smooth" }); return; }
+
+    captureDraft();
+    scrollMemory.set(route.path, window.scrollY);
+    drafts.delete(route.path);            // leaving a form discards its draft only when saved/cancelled above
+    history.pushState({ path }, "", path);
+    route = next;
+    await loadStateAndRender();
+    const remembered = scrollMemory.get(next.path) ?? 0;
+    requestAnimationFrame(() => window.scrollTo({ top: remembered }));
+  };
+
+  window.addEventListener("popstate", () => {
+    captureDraft();
+    scrollMemory.set(route.path, window.scrollY);
+    route = routeFor(window.location.pathname, window.location.search);
+    void loadStateAndRender();
+    requestAnimationFrame(() => window.scrollTo({ top: scrollMemory.get(route.path) ?? 0 }));
+  });
+
+  // ---- every internal link is handled in-app: no reloads, no flicker ----
+  document.addEventListener("click", (event) => {
+    if (event.defaultPrevented || event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;   // let "open in new tab" work
+    const anchor = (event.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+    if (!anchor) return;
+    if (anchor.target && anchor.target !== "_self") return;
+    if (anchor.hasAttribute("download") || anchor.hasAttribute("data-no-soft")) return;
+    const href = anchor.getAttribute("href") ?? "";
+    if (!href.startsWith("/") || href.startsWith("//")) return;                      // external links behave normally
+    event.preventDefault();
+    go(href);
+  });
+
+  const updateStatus = (report?: { pushed: number; applied: number; at: number }, error?: string): void => {
     const counts = `${state.recipes.size} recipes · ${state.mixes.size} mixes · ${state.ingredients.size} ingredients`;
-    const connection = navigator.onLine ? "online" : "offline — local copy in use";
-    setStatus(`${app.deviceId} · ${counts}`, connection);
+    let right: string;
+    if (!navigator.onLine) right = "offline — changes stay queued";
+    else if (error) right = error;
+    else if (report) right = `synced ${new Date(report.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    else right = "syncing…";
+    setStatus(counts, right);
   };
 
   draw();
   updateStatus();
+  scheduler.start();
 
-  // Quiet best-effort sync so devices converge when they can reach each other.
-  if (navigator.onLine) {
-    try {
-      const outcome = await Effect.runPromise(syncNow(app.store, app.deviceId));
-      const fillingInForm = page === "ingredient-form" || page === "mix-form" || page === "recipe-form";
-      if (outcome.applied > 0 && fillingInForm) {
-        // Never re-render under someone's half-filled form: tell them instead.
-        toast(`${outcome.applied} row(s) changed elsewhere — reload to see them.`, "warn");
-      } else if (outcome.applied > 0 || outcome.pushed > 0) {
-        await refresh();
-        if (outcome.applied > 0) toast(`Updated from hub: ${outcome.applied} row(s).`);
-      }
-    } catch {
-      setStatus(`${app.deviceId} · working locally`, "hub not reachable — changes stay queued");
-    }
-  }
+  // First convergence happens quietly after the screen is already usable.
+  void scheduler.trigger().catch(() => undefined);
 
-  window.addEventListener("online", () => { void refresh(); });
-  window.addEventListener("offline", () => { updateStatus(); });
-
-  // Small read-only diagnostic handle: handy when something looks wrong on a device.
-  // Open the browser console and try __baking.debug() or __baking.find("Butter").
+  // Read-only diagnostics for when something looks odd on a device.
   (window as unknown as Record<string, unknown>).__baking = {
     deviceId: app.deviceId,
     debug: async () => {
       const rows = await Effect.runPromise(app.store.allRecords());
-      return {
-        totalRows: rows.length,
-        deleted: rows.filter((row) => row.deleted).length,
-        pendingSync: await Effect.runPromise(pendingCount(app.store)),
-        tables: [...new Set(rows.map((row) => row.table))].sort(),
-      };
+      return { totalRows: rows.length, deleted: rows.filter((r) => r.deleted).length, pendingSync: await Effect.runPromise(pendingCount(app.store)), tables: [...new Set(rows.map((r) => r.table))].sort() };
     },
-    find: async (needle: string) => {
-      const rows = await Effect.runPromise(app.store.allRecords());
-      return rows
-        .filter((row) => JSON.stringify(row.cols).includes(needle))
-        .map((row) => ({ table: row.table, pk: row.pk, deleted: row.deleted, updated_at: row.updated_at }));
-    },
+    find: async (needle: string) => (await Effect.runPromise(app.store.allRecords()))
+      .filter((row) => JSON.stringify(row.cols).includes(needle))
+      .map((row) => ({ table: row.table, pk: row.pk, deleted: row.deleted, updated_at: row.updated_at })),
   };
+
+  // Marks that this page kept running in place (used by the e2e test to prove there were no reloads).
+  (window as unknown as Record<string, unknown>).__baking_boot_at = Date.now();
 }
