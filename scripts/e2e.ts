@@ -59,7 +59,7 @@ const settleTry = async <T>(label: string, action: () => Promise<T>, attempts = 
 
 const ready = async (page: Page, label: string): Promise<void> => {
   try {
-    await page.waitForFunction(() => Boolean(document.querySelector("#app .card, #app table.data tbody tr, #app form, #app .panel")), { timeout: 25000 });
+    await page.waitForFunction(() => Boolean(document.querySelector("#app .card, #app table.data tbody tr, #app form, #app .panel")), { timeout: 25000, polling: 200 });
   } catch (error) {
     const status = await page.$eval("#status-left", (n) => n.textContent ?? "").catch(() => "<none>");
     const text = await page.$eval("#app", (n) => (n.textContent ?? "").slice(0, 180)).catch(() => "<empty>");
@@ -114,7 +114,15 @@ const clickAction = async (page: Page, needle: string, label: string): Promise<v
 };
 
 const waitForPath = async (page: Page, matcher: RegExp, timeoutMs = 12000): Promise<string> => {
-  await page.waitForFunction((source: string) => new RegExp(source).test(location.pathname), { timeout: timeoutMs }, matcher.source);
+  try {
+    await page.waitForFunction((source: string) => new RegExp(source).test(location.pathname), { timeout: timeoutMs, polling: 200 }, matcher.source);
+  } catch (error) {
+    const now = await page.evaluate(() => location.pathname).catch(() => "?");
+    const app = await page.$eval("#app", (node) => (node.textContent ?? "").replace(/\s+/g, " ").slice(0, 140)).catch(() => "<empty>");
+    const clicks = await page.evaluate(() => document.querySelectorAll("#app a, #app tr, #app article").length).catch(() => -1);
+    console.log(`  DIAG(wait ${matcher} at ${now}) interactive nodes=${clicks} app=${JSON.stringify(app)}`);
+    throw error;
+  }
   return currentPath(page);
 };
 

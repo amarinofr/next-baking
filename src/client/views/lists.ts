@@ -4,7 +4,7 @@
 import { mixCostPerKg, summarizeRecipe } from "../../domain/calc.ts";
 import { componentsOf, mixTotalGrams, recipeMathInput, type AppState } from "../../domain/state.ts";
 import type { Ingredient } from "../../domain/schema.ts";
-import { askConfirm, clear, el, euro, grams, num, pct, runAction, runUi, toast } from "../dom.ts";
+import { askConfirm, clear, countUp, el, euro, grams, hydrationRing, mixBar, pct, runAction, runUi, stagger, toast } from "../dom.ts";
 import { categoryChip, type ViewCtx } from "./context.ts";
 
 const byName = (a: { name: string }, b: { name: string }): number => a.name.localeCompare(b.name);
@@ -57,11 +57,15 @@ export function renderIngredients(ctx: ViewCtx, mountPoint: HTMLElement): void {
 
     const rows = filtered.map((ing) => {
       const categoryText = ing.category === "hybrid" ? `hybrid · ${pct((ing.hybrid_water ?? 0) * 100)} water` : ing.category;
+      // colour-coded so you can see at a glance what this thing does to the water balance
+      const categoryCell = el("td", { class: "dim capitalize" },
+        el("span", { class: "chip" }, el("i", { class: `dot ${ing.category ?? "dry"}`, "aria-hidden": "true" }), categoryText),
+      );
       const tr = el(
         "tr",
         {},
         cell(ing.name, "name"),
-        cell(categoryText, "dim capitalize"),
+        categoryCell,
         cell(euro(ing.price), "dim"),
         el("td", {}, actions([
           ["edit", "", () => ctx.navigate(`/ingredients/${ing.id}/edit`)],
@@ -75,7 +79,7 @@ export function renderIngredients(ctx: ViewCtx, mountPoint: HTMLElement): void {
 
     tableWrap.append(el("table", { class: "data" },
       el("thead", {}, el("tr", {}, el("th", {}, "Name"), el("th", {}, "Category"), el("th", {}, "Price (€/kg)"), el("th", {}))),
-      el("tbody", {}, ...rows),
+      el("tbody", {}, ...stagger(rows)),
     ));
   };
 
@@ -117,8 +121,16 @@ export function renderMixes(ctx: ViewCtx, mountPoint: HTMLElement): void {
     const total = mixTotalGrams(components);
     const cost = mixCostPerKg(components.map((c) => ({ amount: c.amount, price: state.ingredients.get(c.ingredient_id)?.price ?? 0 })));
 
+    // the name cell carries a little proportional bar: what this mix is made of, at a glance
+    const nameCell = el("td", { class: "name" }, mix.name);
+    if (components.length > 0) {
+      const bar = mixBar(components.map((c) => ({ grams: c.amount })));
+      bar.setAttribute("title", components.map((c) => `${state.ingredients.get(c.ingredient_id)?.name ?? c.ingredient_id} · ${grams(c.amount)}`).join("\n"));
+      nameCell.append(bar);
+    }
+
     const tr = el("tr", {},
-      cell(mix.name, "name"),
+      nameCell,
       cell(`${components.length} ingredient${components.length === 1 ? "" : "s"} · ${grams(total)} · ${euro(cost)}/kg`, "dim"),
       el("td", {}, actions([
         ["edit", "", () => ctx.navigate(`/mixes/${mix.id}/edit`)],
@@ -138,7 +150,7 @@ export function renderMixes(ctx: ViewCtx, mountPoint: HTMLElement): void {
     el("div", { class: "page-head" }, el("h2", {}, "All Flour Mixes"), el("a", { class: "create", href: "/mixes/new" }, "+ Create New")),
     el("div", { class: "table-wrap" }, el("table", { class: "data" },
       el("thead", {}, el("tr", {}, el("th", {}, "Name"), el("th", {}, "Ingredients"), el("th", {}))),
-      el("tbody", {}, ...rows),
+      el("tbody", {}, ...stagger(rows)),
     )),
     el("p", { class: "hint" }, "A mix is defined by its components — recipes scale it proportionally, so the total does not have to reach 1000 g."),
   );
@@ -172,22 +184,25 @@ export function renderRecipesGrid(ctx: ViewCtx, mountPoint: HTMLElement): void {
   if (cards.length === 0) { mountPoint.append(emptyMessage("No recipes yet.")); return; }
 
   const nodes = cards.map((card) => {
-    const article = el("article", { class: "card" },
+    const costNode = el("span", { class: "cost" });
+    const article = el("article", { class: "card has-ring" },
+      hydrationRing(card.hydration),
       el("h3", {}, card.name),
       el("div", { class: "meta" },
         el("span", {}, `Servings: ${card.servings}`),
-        el("span", {}, `Hydration: ${card.hydration.toFixed(0)}%`),
+        costNode,
       ),
       el("div", { class: "meta sub" },
-        el("span", {}, euro(card.cost)),
         el("span", {}, `${Math.round(card.flourWeight)} g flour · ${Math.round(card.calories)} kcal`),
+        categoryChip(ctx.state, card.category_id) ?? el("span", {}, ""),
       ),
     );
     clickable(article, () => ctx.navigate(`/recipes/${card.id}`), card.name);
+    countUp(costNode, card.cost, euro);
     return article;
   });
 
-  mountPoint.append(el("section", { class: "cards" }, ...nodes));
+  mountPoint.append(el("section", { class: "cards" }, ...stagger(nodes)));
 }
 
 /** Table view of the same recipes (this is where edit / duplicate / delete live, as before). */
@@ -228,7 +243,7 @@ export function renderRecipesTable(ctx: ViewCtx, mountPoint: HTMLElement): void 
 
   mountPoint.append(el("div", { class: "table-wrap" }, el("table", { class: "data" },
     el("thead", {}, el("tr", {}, el("th", {}, "Name"), el("th", {}, "Servings"), el("th", {}, "Hydration"), el("th", {}))),
-    el("tbody", {}, ...rows),
+    el("tbody", {}, ...stagger(rows)),
   )));
 }
 

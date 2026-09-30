@@ -16,7 +16,8 @@
     "typecheck": "tsc --noEmit",
     "export:legacy": "node scripts/export-legacy-db.ts",
     "verify:data": "node scripts/verify-data.ts",
-    "refresh": "node scripts/refresh-copy.ts"
+    "refresh": "node scripts/refresh-copy.ts",
+    "shots": "node scripts/screenshots.ts"
   },
   "dependencies": {
     "astro": "^5.18.2",

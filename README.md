@@ -73,6 +73,7 @@ Run `./run.sh` on whichever machine you want as the hub; every other device just
 | `npm run refresh` | merge the newest snapshot into `data/app.db` **additively** (last-write-wins, never deletes anything here) |
 | `npm run verify:data` | compare `data/app.db` row-by-row against the newest snapshot of your original database (fails if anything is missing or changed) |
 | `npm run export:legacy` | write this app's data back out as a plain SQLite file using the **original** schema (`exports/legacy-compat-*.db`) — the rollback path |
+| `npm run shots` | drive the real UI and save screenshots (desktop + phone) so design changes can be reviewed visually |
 
 ---
 
@@ -133,6 +134,23 @@ A device only ever advances its cursor past changes it has actually seen (never 
 - Recipe categories are read from your original data and shown as coloured labels; you can assign or clear one per recipe, but there is no screen to create or rename categories yet (edit them in the database or in the old app for now).
 - The original database contains one dangling row in `recipe_main_liquids` (its recipe was deleted earlier). It is preserved in copies and skipped by exports — details in `SAFETY.md`.
 - The hub binds `0.0.0.0` so your phone can reach it: it is LAN-facing, unauthenticated by design. Don't port-forward it to the internet.
+
+---
+
+## Look & motion (`ui-polish` branch)
+
+Same zinc-and-monospace identity as the old app, but alive:
+
+- warm ambient light behind everything (static on purpose — an always-animating background eats battery on a phone), wheat mark in the header, sticky blurred header/status bar;
+- a pill that slides under the current tab; cards lift with a light sweeping across them; table rows grow an accent edge when they are clickable;
+- staggered reveals for lists and panels, buttons that press, toasts that slide in with a timer bar, a sync dot that pulses while it works and turns green when it is done;
+- **hydration rings** on recipe cards and on the hydration panel (how wet this dough is, at a glance);
+- a **water gauge** on recipe pages and in the recipe form showing how the liquid splits between your main liquids and what the ingredients carry;
+- proportional **component bars** next to each flour mix, colour-coded category dots in the ingredient list (grey dry · amber hybrid · blue liquid);
+- figures count up when a page opens and flash when the servings scaler moves them;
+- native view transitions where the browser supports them, everything disabled cleanly under `prefers-reduced-motion`.
+
+Look at it without squinting at CSS: `npm run shots` drives the real UI and writes PNGs to `/tmp/ui-shots` (desktop + phone widths).
 
 ---
 

@@ -3,7 +3,7 @@
 import { Effect } from "effect";
 import { boot, reloadState, type AppHandle } from "./app.ts";
 import type { AppState } from "../domain/state.ts";
-import { setStatus, toast } from "./dom.ts";
+import { el, setStatus, toast } from "./dom.ts";
 import { pendingCount } from "./syncClient.ts";
 import { makeSyncScheduler } from "./syncScheduler.ts";
 import type { ViewCtx } from "./views/context.ts";
@@ -67,6 +67,14 @@ export async function startApp(): Promise<void> {
   if (!mountPoint) return;
 
   setStatus("opening local database…");
+
+  // something on screen immediately, then quietly replaced once the local database answers
+  mountPoint.append(
+    el("div", { id: "boot" },
+      el("div", { class: "skeleton head" }),
+      el("div", { class: "cards" }, el("div", { class: "skeleton card" }), el("div", { class: "skeleton card" }), el("div", { class: "skeleton card" })),
+    ),
+  );
 
   let app: AppHandle;
   try {
@@ -132,7 +140,18 @@ export async function startApp(): Promise<void> {
     for (const link of document.querySelectorAll<HTMLAnchorElement>("nav.tabs a[data-tab]")) {
       if (link.dataset.tab === tab) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current");
     }
+    moveTabGlider();
   };
+
+  /** The pill behind the tabs slides to wherever you are now. */
+  function moveTabGlider(): void {
+    const glider = document.querySelector<HTMLElement>(".tab-glider");
+    const active = document.querySelector<HTMLElement>('nav.tabs a[aria-current="page"]');
+    if (!glider || !active) return;
+    glider.style.width = `${active.offsetWidth}px`;
+    glider.style.transform = `translateX(${active.offsetLeft}px)`;
+    glider.classList.add("ready");
+  }
 
   const renderView = (): void => {
     const ctx: ViewCtx = { app, state, refresh, navigate: (path: string) => void go(path), markChanged: () => scheduler.markChanged() };
@@ -166,8 +185,19 @@ export async function startApp(): Promise<void> {
       updateStatus(scheduler.lastSync, `could not read the local database: ${String((error as Error)?.message ?? error)}`);
       return;
     }
-    renderView();
+    paint(renderView);
     updateStatus();
+  }
+
+  /**
+   * Where the screen changes. Where the browser supports it, the swap goes through a real view
+   * transition so old content fades up and new content rises in; elsewhere it simply renders.
+   */
+  function paint(render: () => void): void {
+    const doc = document as Document & { startViewTransition?: (callback: () => void) => unknown };
+    const calm = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    if (typeof doc.startViewTransition === "function" && !calm) doc.startViewTransition(render);
+    else render();
   }
 
   async function refresh(): Promise<void> {
@@ -218,16 +248,19 @@ export async function startApp(): Promise<void> {
   const updateStatus = (report?: { pushed: number; applied: number; at: number }, error?: string): void => {
     const counts = `${state.recipes.size} recipes · ${state.mixes.size} mixes · ${state.ingredients.size} ingredients`;
     let right: string;
-    if (!navigator.onLine) right = "offline — changes stay queued";
-    else if (error) right = error;
-    else if (report) right = `synced ${new Date(report.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-    else right = "syncing…";
+    let mood: string;
+    if (!navigator.onLine) { right = "offline — changes stay queued"; mood = "offline"; }
+    else if (error) { right = error; mood = "error"; }
+    else if (report) { right = `synced ${new Date(report.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`; mood = "synced"; }
+    else { right = "syncing…"; mood = "syncing"; }
+    document.body.dataset.sync = mood;
     setStatus(counts, right);
   };
 
   draw();
   updateStatus();
   scheduler.start();
+  window.addEventListener("resize", moveTabGlider, { passive: true });
 
   // First convergence happens quietly after the screen is already usable.
   void scheduler.trigger().catch(() => undefined);
