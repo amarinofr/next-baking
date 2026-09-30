@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.astro/
+nohup.out
+
+# your data stays out of git on purpose
+data/
+snapshots/
+exports/
+public/seed/state.json

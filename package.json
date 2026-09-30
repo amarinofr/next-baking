@@ -1,0 +1,28 @@
+{
+  "name": "next-baking-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-first baking recipes app (Astro + Effect-TS), offline on desktop/laptop/phone.",
+  "scripts": {
+    "dev": "astro dev --port 4322 --host 0.0.0.0",
+    "seed": "node scripts/build-seed.ts",
+    "build": "npm run seed && astro build",
+    "serve": "node server/hub.ts",
+    "start": "npm run build && node server/hub.ts",
+    "snapshot": "node scripts/snapshot-db.ts",
+    "test": "node --test tests/*.test.ts",
+    "e2e": "node scripts/e2e.ts",
+    "typecheck": "tsc --noEmit",
+    "export:legacy": "node scripts/export-legacy-db.ts"
+  },
+  "dependencies": {
+    "astro": "^5.18.2",
+    "effect": "^3.22.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.9.2",
+    "puppeteer-core": "^24.10.0",
+    "typescript": "^5.9.3"
+  }
+}
