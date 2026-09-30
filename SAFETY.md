@@ -32,6 +32,11 @@ Your running processes were left alone too: the old backend still listens on **:
 
 Source (`backend/`, `frontend/src/`, configs), docs (`PLAN.md`, `PROGRESS.md`, `.pi/brief_*.md`), the launcher `serve.sh`, **its full git history** (`.git/`, so you can diff/blame inside the copy), its old build artifacts (`data.bak.*` folders), and its databases. Excluded only because they are regenerable: `node_modules/`, `dist/`, `.astro/`, and the compiled Go binaries `backend/backend{,.new,.old,.prev}`.
 
+Two notes on that copy:
+
+- SQLite sidecar files (`*-wal`, `*-shm`) were **not** copied — they are transient. Their content was captured properly instead by the online-backup API used for `snapshots/`, which folds the write-ahead log into a consistent `.db` file. So the databases inside `legacy-baking/` are point-in-time copies, and `snapshots/*.db` are the authoritative safe copies.
+- Because `legacy-baking/.git` came along, git treats it as a nested repository: this project records which commit it points at, and never rewrites its contents. Its working tree still shows *your own* pre-existing uncommitted changes (same as `../baking` has) — nothing here wrote to either tree.
+
 Nothing in `legacy-baking/` is executed by this project. It exists so that a mistake here can never reach the real thing.
 
 ### `snapshots/` — hot backups of every database that existed
