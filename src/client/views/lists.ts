@@ -158,9 +158,9 @@ export function renderMixes(ctx: ViewCtx, mountPoint: HTMLElement): void {
 
 // ---------------- recipes ----------------
 
-interface RecipeCard { id: string; name: string; servings: number; hydration: number; cost: number; calories: number; flourWeight: number; category_id: string | null }
+interface RecipeRow { id: string; name: string; servings: number; hydration: number; cost: number; calories: number; flourWeight: number; category_id: string | null }
 
-const recipeCards = (state: AppState): RecipeCard[] =>
+const recipeRows = (state: AppState): RecipeRow[] =>
   [...state.recipes.values()]
     .map((recipe) => {
       const input = recipeMathInput(state, recipe.id);
@@ -169,83 +169,54 @@ const recipeCards = (state: AppState): RecipeCard[] =>
     })
     .sort(byName);
 
-/** Landing grid — same cards as the old app's home page, now clickable anywhere. */
-export function renderRecipesGrid(ctx: ViewCtx, mountPoint: HTMLElement): void {
-  const cards = recipeCards(ctx.state);
+/** The recipe index — one list, no grid variant anywhere. Each row carries a small dial showing
+ *  how hydrated that dough is; edit / duplicate / delete live in the last column, as before. */
+export function renderRecipeIndex(ctx: ViewCtx, mountPoint: HTMLElement): void {
+  const rowsData = recipeRows(ctx.state);
 
   clear(mountPoint);
   mountPoint.append(
     el("div", { class: "page-head" },
       el("h2", {}, "All Recipes"),
-      el("div", { class: "links" }, el("a", { class: "plain", href: "/recipes" }, "table view →"), " ", el("a", { class: "create", href: "/recipes/new" }, "+ New Recipe")),
+      el("div", { class: "links" }, el("a", { class: "create", href: "/recipes/new" }, "+ New Recipe")),
     ),
   );
 
-  if (cards.length === 0) { mountPoint.append(emptyMessage("No recipes yet.")); return; }
+  if (rowsData.length === 0) { mountPoint.append(emptyMessage("No recipes yet — write one down.")); return; }
 
-  const nodes = cards.map((card) => {
-    const costNode = el("span", { class: "cost" });
-    const article = el("article", { class: "card has-ring" },
-      hydrationRing(card.hydration),
-      el("h3", {}, card.name),
-      el("div", { class: "meta" },
-        el("span", {}, `Servings: ${card.servings}`),
-        costNode,
-      ),
-      el("div", { class: "meta sub" },
-        el("span", {}, `${Math.round(card.flourWeight)} g flour · ${Math.round(card.calories)} kcal`),
-        categoryChip(ctx.state, card.category_id) ?? el("span", {}, ""),
-      ),
-    );
-    clickable(article, () => ctx.navigate(`/recipes/${card.id}`), card.name);
-    countUp(costNode, card.cost, euro);
-    return article;
-  });
-
-  mountPoint.append(el("section", { class: "cards" }, ...stagger(nodes)));
-}
-
-/** Table view of the same recipes (this is where edit / duplicate / delete live, as before). */
-export function renderRecipesTable(ctx: ViewCtx, mountPoint: HTMLElement): void {
-  const cards = recipeCards(ctx.state);
-
-  clear(mountPoint);
-  mountPoint.append(
-    el("div", { class: "page-head" },
-      el("h2", {}, "All Recipes"),
-      el("div", { class: "links" }, el("a", { class: "plain", href: "/" }, "grid view →"), " ", el("a", { class: "create", href: "/recipes/new" }, "+ New Recipe")),
-    ),
-  );
-
-  if (cards.length === 0) { mountPoint.append(emptyMessage("No recipes yet.")); return; }
-
-  const rows = cards.map((card) => {
-    const nameCell = el("td", { class: "name" }, card.name);
-    const chip = categoryChip(ctx.state, card.category_id);
+  const rows = rowsData.map((row) => {
+    const nameCell = el("td", { class: "name" }, row.name);
+    const chip = categoryChip(ctx.state, row.category_id);
     if (chip) nameCell.append(" ", chip);
+
+    const costCell = el("td", { class: "dim num" });
+    countUp(costCell, row.cost, euro);
 
     const tr = el("tr", {},
       nameCell,
-      cell(String(card.servings), "dim"),
-      cell(`${card.hydration.toFixed(0)}%`, "dim"),
+      cell(String(row.servings), "dim num"),
+      el("td", { class: "dim hydration" }, hydrationRing(row.hydration)),   // the dial carries the number inside it
+      costCell,
       el("td", {}, actions([
-        ["edit", "", () => ctx.navigate(`/recipes/${card.id}/edit`)],
-        ["duplicate", "", () => runUi(ctx.app.repo.duplicateRecipe(card.id)).then((rows) => { if (rows?.[0]) ctx.navigate(`/recipes/${String(rows[0].cols.id)}`); })],
+        ["edit", "", () => ctx.navigate(`/recipes/${row.id}/edit`)],
+        ["duplicate", "", () => runUi(ctx.app.repo.duplicateRecipe(row.id)).then((rows) => { if (rows?.[0]) ctx.navigate(`/recipes/${String(rows[0].cols.id)}`); })],
         ["delete", "danger", () => {
-          if (!askConfirm(`Delete recipe "${card.name}"? Its ingredient and mix links are removed as well.`)) return;
-          runAction(ctx.app.repo.deleteRecipe(card.id)).then((done) => { if (!done) return; toast(`Deleted ${card.name}.`); void ctx.refresh(); });
+          if (!askConfirm(`Delete recipe "${row.name}"? Its ingredient and mix links are removed as well.`)) return;
+          runAction(ctx.app.repo.deleteRecipe(row.id)).then((done) => { if (!done) return; toast(`Deleted ${row.name}.`); void ctx.refresh(); });
         }]]),
       ),
     );
-    clickable(tr, () => ctx.navigate(`/recipes/${card.id}`), card.name);
+    clickable(tr, () => ctx.navigate(`/recipes/${row.id}`), row.name);
     return tr;
   });
 
-  mountPoint.append(el("div", { class: "table-wrap" }, el("table", { class: "data" },
-    el("thead", {}, el("tr", {}, el("th", {}, "Name"), el("th", {}, "Servings"), el("th", {}, "Hydration"), el("th", {}))),
+  mountPoint.append(el("div", { class: "table-wrap" }, el("table", { class: "data compact" },
+    el("thead", {}, el("tr", {}, el("th", {}, "Name"), el("th", {}, "Servings"), el("th", {}, "Hydration"), el("th", { class: "num" }, "Cost"), el("th", {}))),
     el("tbody", {}, ...stagger(rows)),
   )));
 }
+
+
 
 /** Used by the recipe form's pickers. */
 export const ingredientLabel = (state: AppState, id: string): string => {

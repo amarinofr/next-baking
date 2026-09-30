@@ -17,7 +17,8 @@
     "export:legacy": "node scripts/export-legacy-db.ts",
     "verify:data": "node scripts/verify-data.ts",
     "refresh": "node scripts/refresh-copy.ts",
-    "shots": "node scripts/screenshots.ts"
+    "shots": "node scripts/screenshots.ts",
+    "icons": "node scripts/build-icons.ts"
   },
   "dependencies": {
     "astro": "^5.18.2",

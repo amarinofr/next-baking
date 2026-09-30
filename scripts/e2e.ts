@@ -50,7 +50,7 @@ const settleTry = async <T>(label: string, action: () => Promise<T>, attempts = 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try { return await action(); } catch (error) {
       lastError = error;
-      if (!/detached|not found|no element|no node|no such row|no such card/i.test(String((error as Error)?.message ?? error))) break;
+      if (!/detached|not found|no element|no node|no such row|no such card|matching selector|querySelector/i.test(String((error as Error)?.message ?? error))) break;
       await sleep(350 * attempt);
     }
   }
@@ -93,16 +93,6 @@ const clickRow = async (page: Page, needle: string): Promise<void> => {
   }, needle));
 };
 
-/** Click a grid card anywhere on it. */
-const clickCard = async (page: Page, needle: string): Promise<void> => {
-  await settleTry(`click card "${needle}"`, () => page.evaluate((text: string) => {
-    const cards = [...document.querySelectorAll("article.card")] as HTMLElement[];
-    const card = cards.find((c) => (c.textContent ?? "").includes(text));
-    if (!card) throw new Error("no such card");
-    card.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  }, needle));
-};
-
 /** Click an action button inside the row containing `needle`. */
 const clickAction = async (page: Page, needle: string, label: string): Promise<void> => {
   await settleTry(`click ${label} on "${needle}"`, () => page.evaluate((text: string, buttonLabel: string) => {
@@ -111,6 +101,17 @@ const clickAction = async (page: Page, needle: string, label: string): Promise<v
     if (!button) throw new Error(`no "${buttonLabel}" button for that row`);
     button.click();
   }, needle, label));
+};
+
+/** Click a row, and if a background re-render ate the click, click it again. */
+const clickRowUntil = async (page: Page, needle: string, matcher: RegExp, attempts = 4): Promise<string> => {
+  let last = "";
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    await clickRow(page, needle);
+    try { return await waitForPath(page, matcher, 6000); } catch (error) { last = String((error as Error)?.message ?? error); }
+    await sleep(400 * attempt);
+  }
+  throw new Error(`clicking "${needle}" never reached ${matcher}: ${last}`);
 };
 
 const waitForPath = async (page: Page, matcher: RegExp, timeoutMs = 12000): Promise<string> => {
@@ -177,19 +178,18 @@ const main = async (): Promise<void> => {
     await A.goto(`${BASE}/`, { waitUntil: "networkidle2" });
     await ready(A, "A home");
 
-    const cards = await A.$$eval("article.card", (nodes) => nodes.map((n) => (n.textContent ?? "").trim()));
-    check("seeded recipes render as cards", cards.length >= 7, `${cards.length} cards`);
+    const recipes = await A.$$eval("table.data tbody tr td.name", (nodes) => nodes.map((n) => (n.textContent ?? "").trim()));
+    check("seeded recipes render as the index list", recipes.length >= 7, `${recipes.length} rows`);
 
     const footer = await A.$eval("#status-left", (n) => n.textContent ?? "");
     check("local database opened and counted", /recipes · .* mixes · \d+ ingredients/.test(footer), footer.trim());
 
-    // whole-card click opens the recipe, without loading a new document
-    step = "card click";
-    await clickCard(A, (cards[0] ?? "").split("\n")[0] ?? "");
-    const detailPath = await waitForPath(A, /^\/recipes\/[^/]+$/);
+    // clicking anywhere on a row opens the recipe, without loading a new document
+    step = "row click";
+    const detailPath = await clickRowUntil(A, (recipes[0] ?? "").split("\n")[0] ?? "", /^\/recipes\/[^/]+$/);
     await ready(A, "A recipe detail");
     const detailText = await bodyText(A);
-    check("clicking anywhere on a card opens the recipe", detailPath.startsWith("/recipes/"), detailPath);
+    check("clicking anywhere on a recipe row opens it", detailPath.startsWith("/recipes/"), detailPath);
     check("recipe detail shows hydration + price sections", /Target water/.test(detailText) && /Total liquid/.test(detailText) && /Per Serving/.test(detailText));
 
     // servings scaler must not write anything to the store
@@ -200,9 +200,9 @@ const main = async (): Promise<void> => {
     const pendingAfterScaling = await A.evaluate(async () => Number(((await (window as any).__baking.debug()).pendingSync)));
     check("scaling servings writes nothing to the database", pendingAfterScaling === 0, `input ${beforeValue} → 30, queued rows ${pendingAfterScaling}`);
 
-    // categories from your original database are visible in the table view (still no reload)
+    // categories from your original database are visible in the index (still no reload)
     step = "categories + soft nav";
-    await settleTry("back to the table view", () => A.evaluate(() => { document.querySelector<HTMLAnchorElement>('a[href="/recipes"]')?.click(); }));
+    await settleTry("open the index again", () => A.evaluate(() => { document.querySelector<HTMLAnchorElement>('a[href="/recipes"]')?.click(); }));
     await waitForPath(A, /^\/recipes$/);
     const tableText = await bodyText(A);
     check("recipe categories come through from the original data", /Bread|Sweet bread|Pizza/.test(tableText), tableText.match(/Bread|Sweet bread|Pizza/g)?.slice(0, 3).join(", ") ?? "none");
@@ -243,8 +243,7 @@ const main = async (): Promise<void> => {
 
     // ------------------------------------------------------------------ whole-row click opens the edit form
     step = "row click → edit form";
-    await clickRow(A, marker);
-    const editPath = await waitForPath(A, /^\/ingredients\/[^/]+\/edit$/);
+    const editPath = await clickRowUntil(A, marker, /^\/ingredients\/[^/]+\/edit$/);
     const prefilledName = await settleTry("read prefilled name", () => A.$eval('input[name="name"]', (n) => (n as HTMLInputElement).value));
     const prefilledWater = await settleTry("read prefilled water", () => A.$eval('input[name="water_percent"]', (n) => (n as HTMLInputElement).value));
     check("clicking a row opens its edit form pre-filled", prefilledName === marker && prefilledWater === "85", `${editPath} · water=${prefilledWater}`);
@@ -300,9 +299,13 @@ const main = async (): Promise<void> => {
     await B.goto(`${BASE}/`, { waitUntil: "networkidle2" });
     await ready(B, "B home at phone width");
     const overflow = await B.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
-    const phoneCards = await B.$$eval("article.card", (nodes) => nodes.length);
+    const phoneRows = await B.$$eval("table.data.compact tbody tr", (nodes) => nodes.length);
+    const servingsHidden = await B.evaluate(() => {
+      const cell = document.querySelector<HTMLElement>("table.data.compact tbody tr td:nth-child(2)");
+      return cell ? getComputedStyle(cell).display === "none" : false;
+    });
     check("no horizontal overflow at phone width", overflow.scrollWidth <= overflow.innerWidth + 2, `scrollWidth ${overflow.scrollWidth} vs viewport ${overflow.innerWidth}`);
-    check("recipe cards readable on a phone", phoneCards >= 7, `${phoneCards} cards`);
+    check("recipe index stays readable on a phone", phoneRows >= 7 && servingsHidden, `${phoneRows} rows, least useful column dropped`);
 
     // ------------------------------------------------------------------ offline keeps working
     step = "offline behaviour";

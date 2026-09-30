@@ -46,7 +46,7 @@ export function renderRecipeDetail(ctx: ViewCtx, mountPoint: HTMLElement, id: st
             el("p", { class: "label-upper" }, "Flour Mixes"),
             ...view.mixes.flatMap((mix) => [
               el("p", { class: "line" }, `${mix.name} — `, el("b", {}, grams(mix.amount))),
-              ...(mix.components.length === 0 ? [] : [el("ul", { class: "sub" }, ...mix.components.map((c) => el("li", {}, `— ${c.name}: `, el("b", {}, grams(c.amount)))))]),
+              ...(mix.components.length === 0 ? [] : [el("ul", { class: "sub" }, ...mix.components.map((c) => el("li", {}, `${c.name}: `, el("b", {}, grams(c.amount)))))]),
             ]),
           ] : []),
 
@@ -60,10 +60,7 @@ export function renderRecipeDetail(ctx: ViewCtx, mountPoint: HTMLElement, id: st
 
         // Hydration breakdown (the narrow panel)
         el("section", { class: "panel" },
-          el("div", { class: "panel-head", style: "display:flex; justify-content:space-between; align-items:center; gap:.75rem; padding-right:3.4rem" },
-            el("h3", { style: "margin:0" }, `Hydration (${recipe.hydration_percent.toFixed(0)}%)`),
-            hydrationRing(view.effective_hydration_percent),
-          ),
+          el("h3", {}, `Hydration (${recipe.hydration_percent.toFixed(0)}%)`),
           el("p", { class: "line" }, "Flour weight: ", el("b", {}, grams(view.flour_weight_from_mixes))),
           el("p", { class: "line" }, `Target water (${recipe.hydration_percent.toFixed(0)}%): `, el("b", {}, grams(view.target_water))),
           el("p", { class: "line" }, "Water from liquids: ", el("b", {}, grams(view.water_from_liquids))),
@@ -71,13 +68,13 @@ export function renderRecipeDetail(ctx: ViewCtx, mountPoint: HTMLElement, id: st
           ...(view.liquid_ingredients.length > 0 ? [
             el("p", { class: "label-upper" }, "─ Liquids ─"),
             el("ul", { class: "sub" }, ...view.liquid_ingredients.map((ing) => ing.category === "hybrid"
-              ? el("li", {}, `— ${ing.name}: `, el("b", {}, grams(ing.amount)), el("span", { class: "note" }, ` (${pct(ing.hybrid_water * 100)} water → ${grams(ing.amount * ing.hybrid_water)})`))
-              : el("li", {}, `— ${ing.name}: `, el("b", {}, grams(ing.amount))))),
+              ? el("li", {}, `${ing.name}: `, el("b", {}, grams(ing.amount)), el("span", { class: "note" }, ` (${pct(ing.hybrid_water * 100)} water → ${grams(ing.amount * ing.hybrid_water)})`))
+              : el("li", {}, `${ing.name}: `, el("b", {}, grams(ing.amount))))),
           ] : []),
 
           ...(view.main_liquids.length > 0 ? [
             el("p", { class: "label-upper" }, "─ Main liquids ─"),
-            el("ul", { class: "sub" }, ...view.main_liquids.map((m) => el("li", {}, `— ${m.name}: `, el("b", {}, grams(m.amount)), ` (${pct(m.percentage)})`))),
+            el("ul", { class: "sub" }, ...view.main_liquids.map((m) => el("li", {}, `${m.name}: `, el("b", {}, grams(m.amount)), ` (${pct(m.percentage)})`))),
           ] : []),
 
           ...(view.main_liquid_percentage_total > 0 && Math.abs(view.main_liquid_percentage_total - 100) > 0.01
@@ -88,7 +85,7 @@ export function renderRecipeDetail(ctx: ViewCtx, mountPoint: HTMLElement, id: st
           // where the water in this dough actually comes from
           waterGauge(view.target_water, view.water_from_liquids),
           el("p", { class: "total-line" }, "Total liquid: ", totalLiquidValue),
-          el("p", { class: "line" }, "Effective hydration: ", effectiveValue),
+          el("p", { class: "line" }, "Effective hydration: ", effectiveValue, (() => { const dial = hydrationRing(view.effective_hydration_percent); dial.classList.add("with-label"); return dial; })()),
         ),
       ),
 

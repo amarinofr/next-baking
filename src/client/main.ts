@@ -7,7 +7,7 @@ import { el, setStatus, toast } from "./dom.ts";
 import { pendingCount } from "./syncClient.ts";
 import { makeSyncScheduler } from "./syncScheduler.ts";
 import type { ViewCtx } from "./views/context.ts";
-import { renderIngredients, renderMixes, renderRecipesGrid, renderRecipesTable } from "./views/lists.ts";
+import { renderIngredients, renderMixes, renderRecipeIndex } from "./views/lists.ts";
 import { renderIngredientForm, renderMixForm } from "./views/formsIngredientMix.ts";
 import { renderRecipeForm } from "./views/formsRecipe.ts";
 import { renderRecipeDetail } from "./views/recipeDetail.ts";
@@ -157,8 +157,8 @@ export async function startApp(): Promise<void> {
     const ctx: ViewCtx = { app, state, refresh, navigate: (path: string) => void go(path), markChanged: () => scheduler.markChanged() };
     mountPoint!.replaceChildren();
     switch (route.page) {
-      case "home": renderRecipesGrid(ctx, mountPoint!); break;
-      case "recipes": renderRecipesTable(ctx, mountPoint!); break;
+      case "home":
+      case "recipes": renderRecipeIndex(ctx, mountPoint!); break;
       case "ingredients": renderIngredients(ctx, mountPoint!); break;
       case "ingredient-form": renderIngredientForm(ctx, mountPoint!, route.id); break;
       case "mixes": renderMixes(ctx, mountPoint!); break;

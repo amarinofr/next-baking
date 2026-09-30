@@ -25,8 +25,8 @@ const activeFor = (id: string): boolean =>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#0a0a0a" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#f0e7d8" />
+    <meta name="color-scheme" content="light" />
     <meta name="description" content="Offline-first baking recipes, flour mixes and hydration maths." />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
@@ -68,16 +68,6 @@ const activeFor = (id: string): boolean =>
 
     <div id="toasts" aria-live="polite"></div>
 
-    <!-- shared gradient for the hydration rings drawn on recipe cards -->
-    <svg width="0" height="0" aria-hidden="true" focusable="false" style="position:absolute">
-      <defs>
-        <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stop-color="#38bdf8" />
-          <stop offset="70%" stop-color="#34d399" />
-          <stop offset="100%" stop-color="#e8b04b" />
-        </linearGradient>
-      </defs>
-    </svg>
 
     <script is:inline>
       if ("serviceWorker" in navigator) {

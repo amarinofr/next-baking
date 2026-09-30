@@ -39,13 +39,14 @@ const shot = async (name: string): Promise<void> => { await page.screenshot({ pa
 
 try {
   await page.goto(`${BASE}/`, { waitUntil: "networkidle2" });
-  await page.waitForFunction(() => document.querySelectorAll("article.card").length > 0, { timeout: 25000 });
+  await page.waitForFunction(() => document.querySelectorAll("table.data tbody tr").length > 0, { timeout: 25000 });
   await settle(1400);
-  await shot("01-home-grid");
+  await shot("01-recipe-index");
 
-  await click("a[href='/recipes']");
+  // the old grid route alias still resolves to the same index
+  await page.goto(`${BASE}/recipes`, { waitUntil: "networkidle2" });
   await pathIs(/^\/recipes$/); await settle(900);
-  await shot("02-recipes-table");
+  await shot("02-recipe-index-alias");
 
   await click("table.data tbody tr td.dim");            // whole row is clickable
   await pathIs(/^\/recipes\/[^/]+$/); await settle(1300);
@@ -74,9 +75,9 @@ try {
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   await page.goto(`${BASE}/`, { waitUntil: "networkidle2" });
   await settle(1200);
-  await shot("09-phone-home");
+  await shot("09-phone-index");
 
-  await click("article.card");
+  await click("table.data tbody tr td.dim");
   await pathIs(/^\/recipes\/[^/]+$/); await settle(1200);
   await shot("10-phone-recipe");
 

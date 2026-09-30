@@ -49,28 +49,15 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 
 /** Small ring in the corner of a recipe card: how hydrated this dough is. */
 export function hydrationRing(percent: number): HTMLElement {
-  const fraction = Math.max(0, Math.min(1.15, percent / 100));
-  const radius = 15;
-  const circumference = 2 * Math.PI * radius;
-
-  const svg = document.createElementNS(SVG_NS, "svg") as SVGSVGElement;
-  svg.setAttribute("viewBox", "0 0 36 36");
-  const track = document.createElementNS(SVG_NS, "circle");
-  track.setAttribute("class", "track");
-  track.setAttribute("cx", "18"); track.setAttribute("cy", "18"); track.setAttribute("r", String(radius));
-  const value = document.createElementNS(SVG_NS, "circle");
-  value.setAttribute("class", "value");
-  value.setAttribute("cx", "18"); value.setAttribute("cy", "18"); value.setAttribute("r", String(radius));
-  value.setAttribute("stroke-dasharray", circumference.toFixed(2));
-  value.setAttribute("stroke-dashoffset", circumference.toFixed(2));
-  svg.append(track, value);
-
-  const box = el("div", { class: "ring", "aria-hidden": "true" }, svg, el("span", { class: "label" }, `${Math.round(percent)}%`));
-
-  if (reduceMotion()) value.setAttribute("stroke-dashoffset", (circumference * (1 - fraction)).toFixed(2));
-  else requestAnimationFrame(() => value.setAttribute("stroke-dashoffset", (circumference * (1 - fraction)).toFixed(2)));
-
-  return box;
+  // A CSS dial rather than an SVG one: no viewBox geometry to get wrong at small sizes,
+  // and --p is a registered custom property, so the fill itself animates.
+  const fill = Math.max(0, Math.min(100, percent));
+  const dial = el("span", { class: "dial", "aria-hidden": "true" });
+  dial.style.setProperty("--p", "0");
+  dial.append(el("b", {}, `${Math.round(percent)}%`));
+  if (reduceMotion()) dial.style.setProperty("--p", String(fill));
+  else requestAnimationFrame(() => dial.style.setProperty("--p", String(fill)));
+  return dial;
 }
 
 /** How a dough's water is built up: main liquids vs water carried by ingredients. */
@@ -95,7 +82,7 @@ export function waterGauge(mainWater: number, carriedWater: number): HTMLElement
 /** Proportional bar of a flour mix's components, in the order given. */
 export function mixBar(parts: Array<{ grams: number }>): HTMLElement {
   const total = parts.reduce((sum, part) => sum + part.grams, 0) || 1;
-  const shades = ["#34d399", "#38bdf8", "#e8b04b", "#a78bfa", "#f472b6", "#fb923c", "#4ade80", "#facc15"];
+  const shades = ["#c1893b", "#5f7a4c", "#35708f", "#b0532c", "#9c6a25", "#7d8f69", "#8a6f52", "#265770"];
   return el(
     "div",
     { class: "mixbar", "aria-hidden": "true" },
