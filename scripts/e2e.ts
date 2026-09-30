@@ -34,7 +34,7 @@ const ready = async (page: import("puppeteer-core").Page, label: string, errors?
   } catch (error) {
     const status = await page.$eval("#status-left", (node) => node.textContent ?? "").catch(() => "<no status element>");
     const html = await page.$eval("#app", (node) => (node.textContent ?? "").slice(0, 200)).catch(() => "<empty>");
-    console.log(`  DIAG(${label}) status=${JSON.stringify(status)} app=${JSON.stringify(html)} jsErrors=${JSON.stringify(errors ?? [])}`);
+    console.log(`  DIAG(${label}) status=${JSON.stringify(status)} app=${JSON.stringify(html)} jsErrors=${JSON.stringify(errors ?? [])} (${String((error as Error).message)})`);
     throw error;
   }
 };
