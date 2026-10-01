@@ -66,3 +66,23 @@ export function seedDatabaseFromFile(db: DatabaseSync, path: string): { applied:
     return { applied: 0, reason: `seeding failed: ${String((error as Error).message)}` };
   }
 }
+
+/**
+ * Guard against regenerating the tracked seed from an empty or half-filled database. On a fresh machine the
+ * order is easy to get wrong — build first with no data yet — and without this check the build would quietly
+ * replace a full backup with nothing. Small intentional deletions are allowed; large ones need --force.
+ */
+export function seedWriteDecision(previousRows: number, nextRows: number): { ok: boolean; warn?: string; reason?: string } {
+  if (nextRows >= previousRows) return { ok: true };
+
+  const dropped = previousRows - nextRows;
+  const tolerance = Math.max(5, Math.floor(previousRows * 0.1));
+
+  if (dropped > tolerance) {
+    return {
+      ok: false,
+      reason: `refusing to shrink the seed from ${previousRows} rows to ${nextRows}. If you really deleted that many rows, pass --force.`,
+    };
+  }
+  return { ok: true, warn: `${dropped} row(s) fewer than the tracked seed (${previousRows} → ${nextRows})` };
+}

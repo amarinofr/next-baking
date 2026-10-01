@@ -5,10 +5,10 @@
  * It checks the four things that actually matter on a fresh machine and tells you the one command to run next.
  */
 
-import { existsSync, mkdirSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { ensureSchema, hubStats } from "../src/server/sqliteStore.ts";
+import { hubStats } from "../src/server/sqliteStore.ts";
 import { readSeedFile, seedRecords } from "../src/server/seedHub.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -35,12 +35,11 @@ if (seed.error) {
   say(count > 0, "seed snapshot", `${count} row(s), generated ${seed.file?.generated_at ?? "?"}`);
 }
 
-// 2) this machine's hub database (created on demand, never required to exist in git)
+// 2) this machine's hub database — read-only here, because a diagnostic must never create or change data
 let dbTotal = 0;
-mkdirSync(dirname(DB_PATH), { recursive: true });
 try {
-  const db = new DatabaseSync(DB_PATH);           // creates the file if it is missing
-  ensureSchema(db);
+  if (!existsSync(DB_PATH)) throw new Error("does not exist yet — `npm run bootstrap` builds it from the seed snapshot");
+  const db = new DatabaseSync(DB_PATH, { readOnly: true });
   const stats = hubStats(db);
   dbTotal = Object.values(stats).reduce((a, b) => a + b, 0);
   say(true, "hub database", `${DB_PATH} · ${dbTotal} live row(s)`);
