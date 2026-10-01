@@ -95,6 +95,7 @@ That merge is per row, last-write-wins — pulling never rolls back unrelated wo
 | `npm run refresh` | merge the newest snapshot into `data/app.db` **additively** (last-write-wins, never deletes anything here) |
 | `npm run verify:data` | compare `data/app.db` row-by-row against the newest snapshot of your original database (fails if anything is missing or changed) |
 | `npm run export:legacy` | write this app's data back out as a plain SQLite file using the **original** schema (`exports/legacy-compat-*.db`) — the rollback path |
+| `npm run prune [-- --days N --apply]` | collect tombstones (deleted rows kept only so deletes replicate). Dry run by default; pick a window longer than your longest offline gap, then `npm run seed && npm run build` for a slimmer clone snapshot |
 | `npm run shots` | drive the real UI and save screenshots (desktop + phone) so design changes can be reviewed visually |
 
 ---
@@ -170,7 +171,7 @@ Where Syncthing or git *is* useful: **backups**. `snapshots/*.db` (hot online ba
 - Cross-device convergence needs at least one reachable hub at some point; two devices that never see each other (or a shared hub) will not merge.
 - The tracked seed snapshot means your recipes are in this repository's history. That is deliberate (it is what makes a clone usable and doubles as a backup) — if you would rather keep them out of git, put `public/seed/state.json` back into `.gitignore` and move data with `npm run replicate` instead.
 - Auto-sync is deliberately unhurried: expect another device's change to appear within ~15 s (**Sync now** does it instantly).
-- Deleted rows stay in storage as tombstones (a few bytes each) — they are never shown, and exports omit them. There is no garbage collection of old tombstones yet.
+- Deleted rows stay in storage as tombstones (a few bytes each) — they are never shown, exports omit them, and `npm run prune` collects the ones older than a window you choose.
 - Last-write-wins is per **row**, not per field: if you edit the same recipe on two phones before either syncs, one version wins whole-row.
 - Recipe categories are read from your original data and shown as coloured labels; you can assign or clear one per recipe, but there is no screen to create or rename categories yet (edit them in the database or in the old app for now).
 - The original database contains one dangling row in `recipe_main_liquids` (its recipe was deleted earlier). It is preserved in copies and skipped by exports — details in `SAFETY.md`.

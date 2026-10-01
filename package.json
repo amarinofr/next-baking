@@ -17,6 +17,7 @@
     "refresh": "node scripts/refresh-copy.ts",
     "verify:data": "node scripts/verify-data.ts",
     "export:legacy": "node scripts/export-legacy-db.ts",
+    "prune": "node scripts/prune-tombstones.ts",
     "test": "node --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
     "e2e": "node scripts/e2e.ts",
