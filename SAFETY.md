@@ -92,6 +92,8 @@ The new app has **no code path** that points at `../baking/**`. The only tool th
 | You want proof the rollback file is faithful | compare it yourself: `sqlite3 exports/legacy-compat-*.db "SELECT * FROM ingredients;"` vs the same query on `../baking/data/app.db` — they match row-for-row |
 | You want the new app's data back in the Go app | `npm run export:legacy` → overwrite the old app's DB with `exports/legacy-compat-*.db` (after backing that file up yourself) |
 | Something here went wrong | restore from a snapshot: `cp snapshots/<name>.<stamp>.db data/app.db` |
+| You just cloned this repo onto another machine | `npm run doctor` → `npm run bootstrap` → `npm start`. The tracked `public/seed/state.json` carries the catalogue; nothing outside the clone is read |
+| You want two machines' hub databases to hold the same content | on the machine that should receive rows: `npm run replicate -- http://<other-machine>:7902` (add `--push` for two-way). Row-level last-write-wins — no file copying, no whole-database overwrite |
 | You want to see what changed vs your repo | `cd legacy-baking && git status` / `git diff` (the history is in the copy) |
 
 ---
@@ -127,6 +129,28 @@ Nothing below touched `../baking/**`; each change was applied to this app's own 
 | Legacy timestamps were being prettified on import (`2026-04-11 21:19:58 +0000 +00` → ISO with `T`/`Z`) | `normalizeRow` keeps `created_at` byte-for-byte as your database stores it |
 | A device could advance its cursor past a row written on the hub mid-request | the cursor now only advances over changes the device actually received (`max(local updated_at, previous cursor)`, never the hub's clock) |
 | The legacy export omitted `price_unit`, `category_id` and `recipe_categories` | `scripts/export-legacy-db.ts` mirrors your live schema exactly, writes categories before recipes so FK checks pass, and turns empty `category_id` into NULL like the Go app does |
+
+| Leaving a mix/recipe editor and coming back showed every component row as the same ingredient, and saving would have collapsed them | form drafts were keyed by field name while component rows repeat their names (`ingredient_id`, `amount`), so one row's value was written into all of them. Drafts are now positional and are discarded if the rebuilt form's structure differs; `distinctRows()` additionally refuses a submission that repeats an ingredient or mix, because those link tables are keyed by what they point at |
+| On a machine whose hub database had been created but not filled, `npm run build` replaced the tracked seed snapshot with an empty one | `scripts/build-seed.ts` probes the database first and keeps the existing seed when the local store holds nothing; `seedWriteDecision()` refuses to shrink the seed by more than max(5, 10 %) of its rows unless you pass `--force`. Covered by a unit test |
+
+---
+
+## 7. What is safe to copy around — and what is not
+
+Safe to hand to Syncthing, Dropbox, a USB stick, or git, because each is a self-contained snapshot that no running process writes to:
+
+| Artifact | How it is made |
+|---|---|
+| `snapshots/*.db` | `npm run snapshot` — SQLite online backup of every database found in the original app (WAL included), read-only source |
+| `exports/legacy-compat-*.db` | `npm run export:legacy` — this app's data written out in your **original** schema |
+| `public/seed/state.json` | `npm run seed` — every row as JSON, including tombstones; tracked in this repo so a clone starts with your data |
+
+Never file-sync these, because merging two copies of them is not possible per row, and a partial copy can corrupt them outright:
+
+- `data/app.db` plus its `-wal` / `-shm` side files — the live hub store.
+- browser IndexedDB (`next-baking-app`) — where your daily edits actually live on each device. It is not a file, so no file-sync tool can see it at all.
+
+Data moves between devices through `/api/sync` instead: row by row, last-write-wins on `(updated_at, origin)`, deletes as tombstones, any order tolerated.
 
 Re-verify originals at any time:
 
