@@ -13,8 +13,10 @@
 import { createServer } from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { networkInterfaces } from "node:os";
 import { extname, join, normalize, resolve } from "node:path";
 import { applyChanges, countDanglingLinks, ensureSchema, getDeviceCursor, hubStats, importLegacyDb, readRecords, setDeviceCursor } from "../src/server/sqliteStore.ts";
+import { seedDatabaseFromFile } from "../src/server/seedHub.ts";
 import type { RowRecord } from "../src/domain/types.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -26,10 +28,18 @@ const HOST = process.env.HOST ?? "0.0.0.0";
 
 mkdirSync(DATA_DIR, { recursive: true });
 
+/** IPv4 addresses this machine answers on — printed so you know what to type on the phone or laptop. */
+const lanAddresses = (): string[] => Object.values(networkInterfaces())
+  .flatMap((list) => list ?? [])
+  .filter((info) => !info.internal && String(info.family) === "IPv4")
+  .map((info) => info.address);
+
 const db = new DatabaseSync(DB_PATH);
 ensureSchema(db);
 
-// First run: if the hub database has no data yet and a legacy copy exists in this folder, import it read-only.
+// First run: fill an empty hub with whatever this checkout carries — a legacy SQLite copy if you dropped one
+// next to it, otherwise the tracked seed snapshot. A clone therefore starts with your catalogue instead of an
+// empty app, and nothing here ever reaches into another project's live database.
 {
   const stats = hubStats(db);
   const total = Object.values(stats).reduce((a, b) => a + b, 0);
@@ -39,7 +49,10 @@ ensureSchema(db);
       const imported = importLegacyDb(db, candidate);
       console.log(`[hub] imported ${imported} rows from ${candidate}`);
     } else {
-      console.log("[hub] no legacy database to import; starting empty (devices can also seed from /seed/state.json)");
+      const seeded = seedDatabaseFromFile(db, join(ROOT, "public", "seed", "state.json"));
+      console.log(seeded.applied > 0
+        ? `[hub] created ${DB_PATH} and seeded ${seeded.applied} rows from public/seed/state.json`
+        : `[hub] ${DB_PATH} is empty (${seeded.reason ?? "no seed available"}) — npm run bootstrap or npm run replicate -- http://<other-hub>:7902`);
     }
   } else {
     console.log(`[hub] database ready at ${DB_PATH}`, stats);
@@ -152,12 +165,17 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  const ips = (process.env.LAN_IPS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const ips = (process.env.LAN_IPS ? process.env.LAN_IPS.split(",") : lanAddresses())
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 4);
+
   console.log(`\n  next-baking-app hub`);
   console.log(`  ────────────────────────────────────────`);
   console.log(`  db     ${DB_PATH}`);
   console.log(`  listen http://${HOST}:${PORT}`);
-  for (const ip of ips) console.log(`  phone   http://${ip}:${PORT}   (open there → Add to home screen)`);
+  for (const ip of ips) console.log(`  other devices   http://${ip}:${PORT}   (open there → install as an app)`);
+  if (ips.length === 0) console.log(`  other devices   set LAN_IPS=192.168.x.x to print the address your phone should use`);
   console.log(`\n  Ctrl+C to stop\n`);
 });
 

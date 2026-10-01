@@ -16,6 +16,21 @@ const ROOT = resolve(import.meta.dirname, "..");
 const DB_PATH = process.argv[2] ?? process.env.DB_PATH ?? join(ROOT, "data", "app.db");
 const OUT = join(ROOT, "public", "seed", "state.json");
 
+import { existsSync } from "node:fs";
+
+// A fresh clone has no data/app.db (databases stay out of git). It does carry the seed snapshot, so the build
+// keeps that snapshot instead of failing — `git clone && npm start` works on any machine.
+if (!existsSync(DB_PATH)) {
+  if (existsSync(OUT)) {
+    console.log(`[seed] no local database at ${DB_PATH}; keeping the tracked seed snapshot at ${OUT}`);
+    console.log(`[seed] to carry today's data instead: npm run replicate -- http://<machine-with-the-hub>:7902`);
+    process.exit(0);
+  }
+  console.error(`[seed] no database at ${DB_PATH} and no seed snapshot at ${OUT}.`);
+  console.error(`[seed] fix either way: npm run bootstrap   (from a seed file)   or   npm run replicate -- <hub-url>`);
+  process.exit(1);
+}
+
 if (!process.argv[2] && !process.env.DB_PATH) {
   console.log(`[seed] reading ${DB_PATH} (this project's own copy)`);
 } else {

@@ -6,17 +6,20 @@
   "description": "Local-first baking recipes app (Astro + Effect-TS), offline on desktop/laptop/phone.",
   "scripts": {
     "dev": "astro dev --port 4322 --host 0.0.0.0",
-    "seed": "node scripts/build-seed.ts",
     "build": "npm run seed && astro build",
+    "seed": "node scripts/build-seed.ts",
     "serve": "node server/hub.ts",
     "start": "npm run build && node server/hub.ts",
+    "doctor": "node scripts/doctor.ts",
+    "bootstrap": "node scripts/bootstrap-db.ts",
+    "replicate": "node scripts/replicate.ts",
     "snapshot": "node scripts/snapshot-db.ts",
-    "test": "node --test tests/*.test.ts",
-    "e2e": "node scripts/e2e.ts",
-    "typecheck": "tsc --noEmit",
-    "export:legacy": "node scripts/export-legacy-db.ts",
+    "refresh": "node scripts/refresh-copy.ts",
     "verify:data": "node scripts/verify-data.ts",
-    "refresh": "node scripts/refresh-copy.ts"
+    "export:legacy": "node scripts/export-legacy-db.ts",
+    "test": "node --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "e2e": "node scripts/e2e.ts"
   },
   "dependencies": {
     "astro": "^5.18.2",
