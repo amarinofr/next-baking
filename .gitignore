@@ -3,15 +3,18 @@ dist/
 .astro/
 nohup.out
 
-# your data stays out of git on purpose
+# working databases stay out of git on purpose: they are live files, and copying one over another is how data gets lost
 data/
 snapshots/
 exports/
-public/seed/state.json
+
+# ...but the seed snapshot IS tracked: it is a JSON dump of every row, so a fresh clone starts with your catalogue
+# instead of an empty app (and it doubles as a readable backup). Regenerate with `npm run seed`.
+# If you would rather keep the recipes out of git history, re-add public/seed/state.json here and use
+# `npm run replicate -- <hub-url>` to move data between machines instead.
 
 # reference copy of your old app — local only, deliberately not in this repo
 legacy-baking/
 
 # parallel worktrees (visual polish fork)
 .worktrees/
-node_modules

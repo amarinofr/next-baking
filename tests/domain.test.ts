@@ -7,6 +7,7 @@ import { nextDuplicateName, parseDuplicateName } from "../src/domain/duplicate.t
 import { changesSince, mergeChangesets, wins } from "../src/domain/syncMerge.ts";
 import { makeMemoryStore } from "../src/client/store.ts";
 import { distinctRows, ValidationError } from "../src/domain/schema.ts";
+import { seedWriteDecision } from "../src/server/seedHub.ts";
 import { mixInputFromForm, recipeInputFromForm } from "../src/client/app.ts";
 import { makeRepository } from "../src/domain/repository.ts";
 import { buildState } from "../src/domain/state.ts";
@@ -214,4 +215,17 @@ test("a recipe cannot list the same ingredient twice across its dry and liquid g
   form.append("liquid_ingredient_id", "butter"); form.append("liquid_ingredient_amount", "50");
   const exit = await Effect.runPromiseExit(recipeInputFromForm(form));
   assert.equal(exit._tag, "Failure");
+});
+
+test("regenerating the seed from an empty database is refused", () => {
+  const decision = seedWriteDecision(142, 0);
+  assert.equal(decision.ok, false);
+  assert.match(decision.reason ?? "", /refusing to shrink/);
+
+  const small = seedWriteDecision(142, 138);
+  assert.equal(small.ok, true);
+  assert.match(small.warn ?? "", /4 row\(s\) fewer/);
+
+  assert.equal(seedWriteDecision(0, 5).ok, true);
+  assert.equal(seedWriteDecision(142, 142).ok, true);
 });

@@ -18,7 +18,10 @@
     "verify:data": "node scripts/verify-data.ts",
     "refresh": "node scripts/refresh-copy.ts",
     "shots": "node scripts/screenshots.ts",
-    "icons": "node scripts/build-icons.ts"
+    "icons": "node scripts/build-icons.ts",
+    "doctor": "node scripts/doctor.ts",
+    "bootstrap": "node scripts/bootstrap-db.ts",
+    "replicate": "node scripts/replicate.ts"
   },
   "dependencies": {
     "astro": "^5.18.2",
