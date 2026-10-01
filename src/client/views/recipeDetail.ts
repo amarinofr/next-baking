@@ -2,7 +2,7 @@
 
 import { buildRecipeView, type RecipeMathInput } from "../../domain/calc.ts";
 import { recipeMathInput } from "../../domain/state.ts";
-import { askConfirm, clear, el, euro, grams, num, pct, runAction, toast } from "../dom.ts";
+import { askConfirm, clear, countUp, el, euro, flash, grams, hydrationRing, num, pct, runAction, stagger, toast, waterGauge } from "../dom.ts";
 import { categoryChip, type ViewCtx } from "./context.ts";
 
 export function renderRecipeDetail(ctx: ViewCtx, mountPoint: HTMLElement, id: string): void {
@@ -14,11 +14,20 @@ export function renderRecipeDetail(ctx: ViewCtx, mountPoint: HTMLElement, id: st
 
   const scaleInput = el("input", { id: "scale-input", class: "tiny", type: "number", min: "1", max: "100", value: String(recipe.servings) }) as HTMLInputElement;
   const body = el("div");
+  let firstDraw = true;
+  const shown = { total: "", effective: "", cost: "", perServing: "", calories: "" };
 
   const draw = (): void => {
     const target = Math.max(1, Math.trunc(Number(scaleInput.value) || recipe.servings));
     const view = buildRecipeView(input, target);
     clear(body);
+
+    // the figures that react to the scaler get their own nodes so they can be highlighted when they change
+    const totalLiquidValue = el("b", {}, grams(view.total_liquid));
+    const effectiveValue = el("b", {}, `${view.effective_hydration_percent.toFixed(1)}%`);
+    const costTotalValue = el("b", {});
+    const costPerServingValue = el("b", {}, euro(view.cost_per_serving));
+    const caloriesValue = el("b", {}, num(view.nutrition_per_serving.calories, 0));
 
     body.append(
       // Servings
@@ -37,7 +46,7 @@ export function renderRecipeDetail(ctx: ViewCtx, mountPoint: HTMLElement, id: st
             el("p", { class: "label-upper" }, "Flour Mixes"),
             ...view.mixes.flatMap((mix) => [
               el("p", { class: "line" }, `${mix.name} — `, el("b", {}, grams(mix.amount))),
-              ...(mix.components.length === 0 ? [] : [el("ul", { class: "sub" }, ...mix.components.map((c) => el("li", {}, `— ${c.name}: `, el("b", {}, grams(c.amount)))))]),
+              ...(mix.components.length === 0 ? [] : [el("ul", { class: "sub" }, ...mix.components.map((c) => el("li", {}, `${c.name}: `, el("b", {}, grams(c.amount)))))]),
             ]),
           ] : []),
 
@@ -59,13 +68,13 @@ export function renderRecipeDetail(ctx: ViewCtx, mountPoint: HTMLElement, id: st
           ...(view.liquid_ingredients.length > 0 ? [
             el("p", { class: "label-upper" }, "─ Liquids ─"),
             el("ul", { class: "sub" }, ...view.liquid_ingredients.map((ing) => ing.category === "hybrid"
-              ? el("li", {}, `— ${ing.name}: `, el("b", {}, grams(ing.amount)), el("span", { class: "note" }, ` (${pct(ing.hybrid_water * 100)} water → ${grams(ing.amount * ing.hybrid_water)})`))
-              : el("li", {}, `— ${ing.name}: `, el("b", {}, grams(ing.amount))))),
+              ? el("li", {}, `${ing.name}: `, el("b", {}, grams(ing.amount)), el("span", { class: "note" }, ` (${pct(ing.hybrid_water * 100)} water → ${grams(ing.amount * ing.hybrid_water)})`))
+              : el("li", {}, `${ing.name}: `, el("b", {}, grams(ing.amount))))),
           ] : []),
 
           ...(view.main_liquids.length > 0 ? [
             el("p", { class: "label-upper" }, "─ Main liquids ─"),
-            el("ul", { class: "sub" }, ...view.main_liquids.map((m) => el("li", {}, `— ${m.name}: `, el("b", {}, grams(m.amount)), ` (${pct(m.percentage)})`))),
+            el("ul", { class: "sub" }, ...view.main_liquids.map((m) => el("li", {}, `${m.name}: `, el("b", {}, grams(m.amount)), ` (${pct(m.percentage)})`))),
           ] : []),
 
           ...(view.main_liquid_percentage_total > 0 && Math.abs(view.main_liquid_percentage_total - 100) > 0.01
@@ -73,8 +82,10 @@ export function renderRecipeDetail(ctx: ViewCtx, mountPoint: HTMLElement, id: st
             : []),
 
           el("hr", { class: "sep" }),
-          el("p", { class: "total-line" }, "Total liquid: ", el("b", {}, grams(view.total_liquid))),
-          el("p", { class: "line" }, "Effective hydration: ", el("b", {}, `${view.effective_hydration_percent.toFixed(1)}%`)),
+          // where the water in this dough actually comes from
+          waterGauge(view.target_water, view.water_from_liquids),
+          el("p", { class: "total-line" }, "Total liquid: ", totalLiquidValue),
+          el("p", { class: "line" }, "Effective hydration: ", effectiveValue, (() => { const dial = hydrationRing(view.effective_hydration_percent); dial.classList.add("with-label"); return dial; })()),
         ),
       ),
 
@@ -83,7 +94,7 @@ export function renderRecipeDetail(ctx: ViewCtx, mountPoint: HTMLElement, id: st
         el("section", { class: "panel" },
           el("h3", {}, "Per Serving"),
           el("div", { class: "kv" },
-            el("span", {}, "Calories"), el("b", {}, num(view.nutrition_per_serving.calories, 0)),
+            el("span", {}, "Calories"), caloriesValue,
             el("span", {}, "Protein"), el("b", {}, `${num(view.nutrition_per_serving.protein)} g`),
             el("span", {}, "Fats"), el("b", {}, `${num(view.nutrition_per_serving.fats)} g`),
             el("span", {}, "Carbs"), el("b", {}, `${num(view.nutrition_per_serving.carbs)} g`),
@@ -94,13 +105,38 @@ export function renderRecipeDetail(ctx: ViewCtx, mountPoint: HTMLElement, id: st
         ),
         el("section", { class: "panel" },
           el("h3", {}, "Price"),
-          el("p", { class: "line" }, "Total: ", el("b", {}, euro(view.total_cost))),
-          el("p", { class: "line" }, "Per serving: ", el("b", {}, euro(view.cost_per_serving))),
+          el("p", { class: "line" }, "Total: ", costTotalValue),
+          el("p", { class: "line" }, "Per serving: ", costPerServingValue),
         ),
       ),
 
       el("div", { class: "right" }, deleteButton()),
     );
+
+    stagger([...body.querySelectorAll<HTMLElement>("section.panel")]);
+
+    const current = {
+      total: grams(view.total_liquid),
+      effective: `${view.effective_hydration_percent.toFixed(1)}%`,
+      cost: euro(view.total_cost),
+      perServing: euro(view.cost_per_serving),
+      calories: num(view.nutrition_per_serving.calories, 0),
+    };
+
+    if (firstDraw) {
+      firstDraw = false;
+      countUp(costTotalValue, view.total_cost, euro);
+      countUp(caloriesValue, view.nutrition_per_serving.calories, (n) => num(n, 0));
+    } else {
+      // scaling servings: highlight only the figures that really moved
+      if (current.total !== shown.total) flash(totalLiquidValue);
+      if (current.effective !== shown.effective) flash(effectiveValue);
+      if (current.cost !== shown.cost) flash(costTotalValue);
+      if (current.perServing !== shown.perServing) flash(costPerServingValue);
+      if (current.calories !== shown.calories) flash(caloriesValue);
+    }
+
+    Object.assign(shown, current);
   };
 
   const deleteButton = (): HTMLElement => {

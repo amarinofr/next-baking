@@ -50,7 +50,7 @@ const settleTry = async <T>(label: string, action: () => Promise<T>, attempts = 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try { return await action(); } catch (error) {
       lastError = error;
-      if (!/detached|not found|no element|no node|no such row|no such card/i.test(String((error as Error)?.message ?? error))) break;
+      if (!/detached|not found|no element|no node|no such row|no such card|matching selector|querySelector/i.test(String((error as Error)?.message ?? error))) break;
       await sleep(350 * attempt);
     }
   }
@@ -59,7 +59,7 @@ const settleTry = async <T>(label: string, action: () => Promise<T>, attempts = 
 
 const ready = async (page: Page, label: string): Promise<void> => {
   try {
-    await page.waitForFunction(() => Boolean(document.querySelector("#app .card, #app table.data tbody tr, #app form, #app .panel")), { timeout: 25000 });
+    await page.waitForFunction(() => Boolean(document.querySelector("#app .card, #app table.data tbody tr, #app form, #app .panel")), { timeout: 25000, polling: 200 });
   } catch (error) {
     const status = await page.$eval("#status-left", (n) => n.textContent ?? "").catch(() => "<none>");
     const text = await page.$eval("#app", (n) => (n.textContent ?? "").slice(0, 180)).catch(() => "<empty>");
@@ -93,16 +93,6 @@ const clickRow = async (page: Page, needle: string): Promise<void> => {
   }, needle));
 };
 
-/** Click a grid card anywhere on it. */
-const clickCard = async (page: Page, needle: string): Promise<void> => {
-  await settleTry(`click card "${needle}"`, () => page.evaluate((text: string) => {
-    const cards = [...document.querySelectorAll("article.card")] as HTMLElement[];
-    const card = cards.find((c) => (c.textContent ?? "").includes(text));
-    if (!card) throw new Error("no such card");
-    card.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  }, needle));
-};
-
 /** Click an action button inside the row containing `needle`. */
 const clickAction = async (page: Page, needle: string, label: string): Promise<void> => {
   await settleTry(`click ${label} on "${needle}"`, () => page.evaluate((text: string, buttonLabel: string) => {
@@ -113,8 +103,27 @@ const clickAction = async (page: Page, needle: string, label: string): Promise<v
   }, needle, label));
 };
 
+/** Click a row, and if a background re-render ate the click, click it again. */
+const clickRowUntil = async (page: Page, needle: string, matcher: RegExp, attempts = 4): Promise<string> => {
+  let last = "";
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    await clickRow(page, needle);
+    try { return await waitForPath(page, matcher, 6000); } catch (error) { last = String((error as Error)?.message ?? error); }
+    await sleep(400 * attempt);
+  }
+  throw new Error(`clicking "${needle}" never reached ${matcher}: ${last}`);
+};
+
 const waitForPath = async (page: Page, matcher: RegExp, timeoutMs = 12000): Promise<string> => {
-  await page.waitForFunction((source: string) => new RegExp(source).test(location.pathname), { timeout: timeoutMs }, matcher.source);
+  try {
+    await page.waitForFunction((source: string) => new RegExp(source).test(location.pathname), { timeout: timeoutMs, polling: 200 }, matcher.source);
+  } catch (error) {
+    const now = await page.evaluate(() => location.pathname).catch(() => "?");
+    const app = await page.$eval("#app", (node) => (node.textContent ?? "").replace(/\s+/g, " ").slice(0, 140)).catch(() => "<empty>");
+    const clicks = await page.evaluate(() => document.querySelectorAll("#app a, #app tr, #app article").length).catch(() => -1);
+    console.log(`  DIAG(wait ${matcher} at ${now}) interactive nodes=${clicks} app=${JSON.stringify(app)}`);
+    throw error;
+  }
   return currentPath(page);
 };
 
@@ -139,6 +148,25 @@ interface HubRow { table: string; pk: string; deleted?: boolean; cols: Record<st
 const hubIngredientNames = async (): Promise<string[]> => {
   const data = await hubJson<{ records: HubRow[] }>("/api/export.json");
   return data.records.filter((row) => !row.deleted && row.table === "ingredients").map((row) => String(row.cols.name ?? ""));
+};
+
+/** What the mix editor currently shows, row by row. */
+const readComponentRows = async (page: Page): Promise<Array<{ ingredient: string; amount: number }>> =>
+  page.$$eval(".component-row", (rows) => rows.map((row) => ({
+    ingredient: (row.querySelector("select") as HTMLSelectElement | null)?.value ?? "",
+    amount: Number((row.querySelector("input[name=amount]") as HTMLInputElement | null)?.value ?? NaN),
+  })));
+
+const pendingWrites = async (page: Page): Promise<number> => page.evaluate(async () => Number(((await (window as any).__baking.debug()).pendingSync)));
+
+const hubMixComponents = async (mixName: string): Promise<Array<{ ingredient_id: string; amount: number }>> => {
+  const data = await hubJson<{ records: HubRow[] }>("/api/export.json");
+  const live = data.records.filter((row) => !row.deleted);
+  const mix = live.find((row) => row.table === "flour_mixes" && String(row.cols.name ?? "") === mixName);
+  if (!mix) return [];
+  return live.filter((row) => row.table === "flour_mix_components" && String(row.cols.mix_id ?? "") === String(mix.pk))
+    .map((row) => ({ ingredient_id: String(row.cols.ingredient_id), amount: Number(row.cols.amount) }))
+    .sort((a, b) => a.ingredient_id.localeCompare(b.ingredient_id));
 };
 
 /** Leave the hub as we found it. */
@@ -169,19 +197,18 @@ const main = async (): Promise<void> => {
     await A.goto(`${BASE}/`, { waitUntil: "networkidle2" });
     await ready(A, "A home");
 
-    const cards = await A.$$eval("article.card", (nodes) => nodes.map((n) => (n.textContent ?? "").trim()));
-    check("seeded recipes render as cards", cards.length >= 7, `${cards.length} cards`);
+    const recipes = await A.$$eval("table.data tbody tr td.name", (nodes) => nodes.map((n) => (n.textContent ?? "").trim()));
+    check("seeded recipes render as the index list", recipes.length >= 7, `${recipes.length} rows`);
 
     const footer = await A.$eval("#status-left", (n) => n.textContent ?? "");
     check("local database opened and counted", /recipes · .* mixes · \d+ ingredients/.test(footer), footer.trim());
 
-    // whole-card click opens the recipe, without loading a new document
-    step = "card click";
-    await clickCard(A, (cards[0] ?? "").split("\n")[0] ?? "");
-    const detailPath = await waitForPath(A, /^\/recipes\/[^/]+$/);
+    // clicking anywhere on a row opens the recipe, without loading a new document
+    step = "row click";
+    const detailPath = await clickRowUntil(A, (recipes[0] ?? "").split("\n")[0] ?? "", /^\/recipes\/[^/]+$/);
     await ready(A, "A recipe detail");
     const detailText = await bodyText(A);
-    check("clicking anywhere on a card opens the recipe", detailPath.startsWith("/recipes/"), detailPath);
+    check("clicking anywhere on a recipe row opens it", detailPath.startsWith("/recipes/"), detailPath);
     check("recipe detail shows hydration + price sections", /Target water/.test(detailText) && /Total liquid/.test(detailText) && /Per Serving/.test(detailText));
 
     // servings scaler must not write anything to the store
@@ -192,9 +219,9 @@ const main = async (): Promise<void> => {
     const pendingAfterScaling = await A.evaluate(async () => Number(((await (window as any).__baking.debug()).pendingSync)));
     check("scaling servings writes nothing to the database", pendingAfterScaling === 0, `input ${beforeValue} → 30, queued rows ${pendingAfterScaling}`);
 
-    // categories from your original database are visible in the table view (still no reload)
+    // categories from your original database are visible in the index (still no reload)
     step = "categories + soft nav";
-    await settleTry("back to the table view", () => A.evaluate(() => { document.querySelector<HTMLAnchorElement>('a[href="/recipes"]')?.click(); }));
+    await settleTry("open the index again", () => A.evaluate(() => { document.querySelector<HTMLAnchorElement>('a[href="/recipes"]')?.click(); }));
     await waitForPath(A, /^\/recipes$/);
     const tableText = await bodyText(A);
     check("recipe categories come through from the original data", /Bread|Sweet bread|Pizza/.test(tableText), tableText.match(/Bread|Sweet bread|Pizza/g)?.slice(0, 3).join(", ") ?? "none");
@@ -235,8 +262,7 @@ const main = async (): Promise<void> => {
 
     // ------------------------------------------------------------------ whole-row click opens the edit form
     step = "row click → edit form";
-    await clickRow(A, marker);
-    const editPath = await waitForPath(A, /^\/ingredients\/[^/]+\/edit$/);
+    const editPath = await clickRowUntil(A, marker, /^\/ingredients\/[^/]+\/edit$/);
     const prefilledName = await settleTry("read prefilled name", () => A.$eval('input[name="name"]', (n) => (n as HTMLInputElement).value));
     const prefilledWater = await settleTry("read prefilled water", () => A.$eval('input[name="water_percent"]', (n) => (n as HTMLInputElement).value));
     check("clicking a row opens its edit form pre-filled", prefilledName === marker && prefilledWater === "85", `${editPath} · water=${prefilledWater}`);
@@ -286,15 +312,40 @@ const main = async (): Promise<void> => {
     const componentRows = await A.$$eval(".component-row", (nodes) => nodes.length);
     check("clicking a mix row opens its editor with components loaded", componentRows > 0, `${mixEditPath} · ${componentRows} component row(s)`);
 
+    // The bug this guards against: leaving an editor and coming back used to pour one row's values into
+    // every component row, which looked like the mix had been erased — and would have saved that way too.
+    step = "mix editor round trip";
+    const queuedBefore = await pendingWrites(A);
+    const onOpen = await readComponentRows(A);
+    await settleTry("leave the mix editor", () => A.goBack());
+    await waitForPath(A, /^\/mixes$/);
+    await clickRowUntil(A, firstMix, /^\/mixes\/[^/]+\/edit$/);
+    const afterRoundTrip = await readComponentRows(A);
+
+    const expected = await hubMixComponents(firstMix);
+    const nowSorted = [...afterRoundTrip].sort((a, b) => a.ingredient.localeCompare(b.ingredient));
+    const storedSorted = [...expected].sort((a, b) => a.ingredient_id.localeCompare(b.ingredient_id));
+    const sameShape = nowSorted.length === storedSorted.length;
+    const faithful = sameShape && nowSorted.every((row, i) => row.ingredient === storedSorted[i]!.ingredient_id && Math.abs(row.amount - storedSorted[i]!.amount) < 0.01);
+    check(`coming back to "${firstMix}" keeps every component its own ingredient`, faithful && new Set(afterRoundTrip.map((r) => r.ingredient)).size > 1,
+      `open: ${onOpen.map((r) => `${r.ingredient}=${r.amount}`).join(", ")} → back: ${afterRoundTrip.map((r) => `${r.ingredient}=${r.amount}`).join(", ")}`);
+
+    const queuedAfter = await pendingWrites(A);
+    check("that round trip queued no writes", queuedAfter <= queuedBefore, `queued ${queuedBefore} → ${queuedAfter}`);
+
     // ------------------------------------------------------------------ phone layout
     step = "phone layout";
     await B.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
     await B.goto(`${BASE}/`, { waitUntil: "networkidle2" });
     await ready(B, "B home at phone width");
     const overflow = await B.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
-    const phoneCards = await B.$$eval("article.card", (nodes) => nodes.length);
+    const phoneRows = await B.$$eval("table.data.compact tbody tr", (nodes) => nodes.length);
+    const servingsHidden = await B.evaluate(() => {
+      const cell = document.querySelector<HTMLElement>("table.data.compact tbody tr td:nth-child(2)");
+      return cell ? getComputedStyle(cell).display === "none" : false;
+    });
     check("no horizontal overflow at phone width", overflow.scrollWidth <= overflow.innerWidth + 2, `scrollWidth ${overflow.scrollWidth} vs viewport ${overflow.innerWidth}`);
-    check("recipe cards readable on a phone", phoneCards >= 7, `${phoneCards} cards`);
+    check("recipe index stays readable on a phone", phoneRows >= 7 && servingsHidden, `${phoneRows} rows, least useful column dropped`);
 
     // ------------------------------------------------------------------ offline keeps working
     step = "offline behaviour";

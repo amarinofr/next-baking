@@ -51,10 +51,9 @@ const rowsOf = (db: string, spec: { table: string; keys: string[]; columns: stri
 };
 
 const newestSnapshot = (): string => {
-  const dir = join(ROOT, "snapshots");
-  const candidates = existsSync(dir)
-    ? readdirSync(dir).filter((name) => /^baking-data.*\.db$/.test(name)).map((name) => join(dir, name))
-    : [];
+  // works from the main checkout *and* from a git worktree, where snapshots/ lives in the parent project
+  const dirs = [join(ROOT, "snapshots"), resolve(ROOT, "../snapshots"), resolve(ROOT, "../../snapshots")].filter((dir) => existsSync(dir));
+  const candidates = dirs.flatMap((dir) => readdirSync(dir).filter((name) => /^baking-data.*\.db$/.test(name)).map((name) => join(dir, name)));
 
   // Newest by modification time, and only snapshots that actually contain data: some runs
   // backed up empty legacy copies, and comparing against one of those proves nothing.

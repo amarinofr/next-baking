@@ -3,7 +3,7 @@
 import { buildRecipeView, type IngredientUse, type MixUse, type RecipeMathInput } from "../../domain/calc.ts";
 import { componentsOf, recipeMathInput } from "../../domain/state.ts";
 import type { Recipe } from "../../domain/schema.ts";
-import { askConfirm, clear, el, euro, grams, num, pct, runAction, runUi, toast } from "../dom.ts";
+import { askConfirm, clear, el, euro, grams, num, pct, runAction, runUi, toast, waterGauge } from "../dom.ts";
 import { recipeInputFromForm } from "../app.ts";
 import { type ViewCtx } from "./context.ts";
 
@@ -49,6 +49,7 @@ export function renderRecipeForm(ctx: ViewCtx, mountPoint: HTMLElement, editingI
   const wetOptions: Array<[string, string]> = [["", "-- Select --"], ...wetIngredients.map((i) => [i.id, labelOf(i.id)] as [string, string])];
 
   const panel = el("pre", { class: "preview" });
+  const gaugeSlot = el("div");   // the same water figures, drawn
   const previousInput = editingId ? recipeMathInput(state, editingId) : undefined;
 
   const form = el("form", { class: "max-w" });
@@ -109,7 +110,8 @@ export function renderRecipeForm(ctx: ViewCtx, mountPoint: HTMLElement, editingI
       (previousInput?.main_liquids ?? []).map((l) => ({ idOrMix: l.ingredient_id, amount: l.percentage })), "%"),
 
     panel,
-    el("div", { class: "right" }, el("button", { class: "primary save", type: "submit" }, recipe ? "Save" : "Save")),
+    gaugeSlot,
+    el("div", { class: "right" }, el("button", { class: "primary save", type: "submit" }, "Save")),
   );
 
   form.addEventListener("change", recompute);
@@ -173,6 +175,7 @@ export function renderRecipeForm(ctx: ViewCtx, mountPoint: HTMLElement, editingI
       `Cost: ${euro(view.total_cost)} total · ${euro(view.cost_per_serving)} per serving`,
       `Per serving: ${num(view.nutrition_per_serving.calories, 0)} kcal · P ${num(view.nutrition_per_serving.protein)}/F ${num(view.nutrition_per_serving.fats)}/C ${num(view.nutrition_per_serving.carbs)} g`,
     ].join("\n");
+    gaugeSlot.replaceChildren(waterGauge(view.target_water, view.water_from_liquids));
   }
 
   form.addEventListener("submit", async (event) => {
