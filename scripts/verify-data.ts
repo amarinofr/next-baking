@@ -90,12 +90,31 @@ function danglingInOriginal(snapshot: string, spec: { table: string; keys: strin
   });
 }
 
+/**
+ * Where a row in THIS app came from. A difference against the snapshot means something only if you cannot say
+ * who wrote it: rows carrying a device origin were edited inside this app after the snapshot was taken.
+ */
+function provenance(table: string, keys: string[], key: string): { note: string; byDevice: boolean } {
+  const values = key.split("::");
+  const where = keys.map((column, index) => `${column} = '${((values[index] ?? "").replace(/'/g, "''"))}'`).join(" AND ");
+  try {
+    const found = query(`file:${WORKING}?mode=ro`, `SELECT origin || '@' || updated_at FROM ${table} WHERE ${where} LIMIT 1;`);
+    if (found.length === 0) return { note: "", byDevice: false };
+    const [origin = "unknown", stamp = "0"] = String(found[0]).split("@");
+    const when = new Date(Number(stamp)).toISOString().slice(0, 16).replace("T", " ");
+    return { note: `   ← written here by ${origin} at ${when}`, byDevice: origin.startsWith("dev-") };
+  } catch {
+    return { note: "", byDevice: false };
+  }
+}
+
 const args = process.argv.slice(2);
 const snapshot = args[0] ? resolve(args[0]) : newestSnapshot();
 
 console.log(`\n  next-baking-app · data fidelity check\n  reference : ${snapshot}\n  working   : ${WORKING}\n`);
 
 let problems = 0;
+let editedHere = 0;
 
 for (const spec of LEGACY_TABLES) {
   const original = rowsOf(`file:${snapshot}?mode=ro`, spec);
@@ -110,7 +129,11 @@ for (const spec of LEGACY_TABLES) {
     if (mine === undefined) {
       if (oursAll.has(key)) continue;
       if (danglingInOriginal(snapshot, spec, key)) orphans.push(value); else missing.push(value);
-    } else if (mine !== value) different.push(`${key}: [${value}] -> [${mine}]`);
+    } else if (mine !== value) {
+      const source = provenance(spec.table, spec.keys, key);
+      if (source.byDevice) editedHere += 1;
+      different.push(`${key}: [${value}] -> [${mine}]${source.note}`);
+    }
   }
 
   const extra: string[] = [];
@@ -126,5 +149,9 @@ for (const spec of LEGACY_TABLES) {
   for (const line of extra.slice(0, 8)) console.log(`        only in this app: ${line}`);
 }
 
-console.log(problems === 0 ? "\n  Every row of the original is present and identical.\n" : `\n  ${problems} table(s) differ — investigate before relying on this copy.\n`);
+console.log(problems === 0 ? "\n  Every row of the original is present and identical.\n" : `\n  ${problems} table(s) differ — investigate before relying on this copy.`);
+if (editedHere > 0) {
+  console.log(`  Of those, ${editedHere} difference(s) are marked “written here by dev-…”: they are your own edits made inside this app after the snapshot was taken, not drift from somewhere else.`);
+  console.log(`  Compare against a fresher snapshot with: npm run snapshot && npm run verify:data\n`);
+}
 process.exit(problems === 0 ? 0 : 1);

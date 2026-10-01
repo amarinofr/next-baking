@@ -94,7 +94,7 @@ That merge is per row, last-write-wins — pulling never rolls back unrelated wo
 | `npm run snapshot` | **read-only** hot backup of every SQLite file found in the original app into `snapshots/` |
 | `npm run snapshot -- --refresh` | additionally refresh this app's working copy (`data/app.db`) from the old app's live DB |
 | `npm run refresh` | merge the newest snapshot into `data/app.db` **additively** (last-write-wins, never deletes anything here) |
-| `npm run verify:data` | compare `data/app.db` row-by-row against the newest snapshot of your original database (fails if anything is missing or changed) |
+| `npm run verify:data` | compare `data/app.db` row-by-row against the newest snapshot of your original database; any difference is annotated with who wrote it and when, so an edit you made in this app reads differently from unexplained drift |
 | `npm run export:legacy` | write this app's data back out as a plain SQLite file using the **original** schema (`exports/legacy-compat-*.db`) — the rollback path |
 | `npm run prune [-- --days N --apply]` | collect tombstones (deleted rows kept only so deletes replicate). Dry run by default; pick a window longer than your longest offline gap, then `npm run seed && npm run build` for a slimmer clone snapshot |
 | `npm run shots` | drive the real UI and save screenshots (desktop + phone) so design changes can be reviewed visually |
