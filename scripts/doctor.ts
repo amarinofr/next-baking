@@ -5,8 +5,8 @@
  * It checks the four things that actually matter on a fresh machine and tells you the one command to run next.
  */
 
-import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { ensureSchema, hubStats } from "../src/server/sqliteStore.ts";
 import { readSeedFile, seedRecords } from "../src/server/seedHub.ts";
@@ -37,6 +37,7 @@ if (seed.error) {
 
 // 2) this machine's hub database (created on demand, never required to exist in git)
 let dbTotal = 0;
+mkdirSync(dirname(DB_PATH), { recursive: true });
 try {
   const db = new DatabaseSync(DB_PATH);           // creates the file if it is missing
   ensureSchema(db);
