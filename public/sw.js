@@ -1,5 +1,5 @@
 /* next-baking-app service worker — app shell + data snapshots stay usable offline. */
-const VERSION = "next-baking-v1";
+const VERSION = "next-baking-fb52711";
 const SHELL = ["/", "/recipes", "/ingredients", "/mixes", "/settings", "/seed/state.json", "/manifest.webmanifest", "/icons/icon.svg"];
 
 self.addEventListener("install", (event) => {

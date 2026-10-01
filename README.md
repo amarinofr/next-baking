@@ -82,7 +82,8 @@ That merge is per row, last-write-wins — pulling never rolls back unrelated wo
 | Command | What it does |
 |---|---|
 | `npm run dev` | Astro dev server on `:4322` (hot reload while editing) |
-| `npm run build` | regenerate the seed bundle + static build into `dist/` |
+| `npm run build` | bump the service worker cache version, regenerate the seed bundle, static build into `dist/` |
+| `npm run sw-version` | stamp `public/sw.js` with this revision so installed PWAs drop their old cache instead of serving a previous design |
 | `npm run serve` / `./run.sh` | serve `dist/` + SQLite sync hub on `:7902` |
 | `npm run doctor` | what this machine has (seed snapshot, hub database, build, node version) and the next command to run |
 | `npm run bootstrap` | create `data/app.db` from the tracked seed snapshot; refuses to overwrite a database that already has rows |
