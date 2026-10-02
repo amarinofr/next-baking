@@ -9,6 +9,7 @@
 
 import { Effect } from "effect";
 import { nextDuplicateName } from "./duplicate.ts";
+import { uuid } from "./ids.ts";
 import { NotFoundError, StorageError, ValidationError, type IngredientInput, type MixInput, type RecipeInput } from "./schema.ts";
 import { TABLES, pkOf, type RowRecord, type TableName } from "./types.ts";
 import type { Store } from "../client/store.ts";
@@ -16,7 +17,7 @@ import type { Store } from "../client/store.ts";
 export interface RepoDeps { readonly store: Store; readonly deviceId: string; readonly now?: () => number }
 
 const nowIso = () => new Date().toISOString();
-const newId = () => (globalThis.crypto?.randomUUID?.() ?? `id-${Math.random().toString(36).slice(2)}-${Date.now()}`);
+const newId = uuid; // one id source for every write, usable on any origin (see ids.ts)
 
 const colsOf = (record: RowRecord): Record<string, unknown> => record.cols;
 

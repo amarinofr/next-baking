@@ -6,7 +6,7 @@
  *   npm run shots                       # writes /tmp/ui-shots/*.png
  *
  * Screens captured: recipe grid, recipes table, recipe detail (+ scaled), ingredients, flour mixes,
- * mix editor, sync screen, and the same two main screens at phone width.
+ * mix editor, the two big forms, sync screen, and the main screens at phone width.
  */
 
 import puppeteer from "puppeteer-core";
@@ -62,7 +62,7 @@ try {
 
   await click('nav.tabs [data-tab="mixes"]');
   await pathIs(/^\/mixes$/); await settle(900);
-  await shot("06-mixes-bars");
+  await shot("06-mixes");
 
   await click("table.data tbody tr td.dim");
   await pathIs(/^\/mixes\/[^/]+\/edit$/); await settle(900);
@@ -71,6 +71,14 @@ try {
   await page.goto(`${BASE}/settings`, { waitUntil: "networkidle2" });
   await settle(900);
   await shot("08-settings");
+
+  await page.goto(`${BASE}/recipes/new`, { waitUntil: "networkidle2" });
+  await pathIs(/^\/recipes\/new$/); await settle(1000);
+  await shot("09-recipe-form");
+
+  await page.goto(`${BASE}/ingredients/new`, { waitUntil: "networkidle2" });
+  await pathIs(/^\/ingredients\/new$/); await settle(1000);
+  await shot("10-ingredient-form");
 
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   await page.goto(`${BASE}/`, { waitUntil: "networkidle2" });
@@ -84,6 +92,14 @@ try {
   await click('nav.tabs [data-tab="ingredients"]');
   await pathIs(/^\/ingredients$/); await settle(900);
   await shot("11-phone-ingredients");
+
+  await click('nav.tabs [data-tab="mixes"]');
+  await pathIs(/^\/mixes$/); await settle(900);
+  await shot("12-phone-mixes");
+
+  await page.goto(`${BASE}/settings`, { waitUntil: "networkidle2" });
+  await settle(900);
+  await shot("13-phone-settings");
 } finally {
   await browser.close();
 }

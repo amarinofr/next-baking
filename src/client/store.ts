@@ -8,6 +8,7 @@
 
 import { Effect } from "effect";
 import { StorageError } from "../domain/schema.ts";
+import { uuid } from "../domain/ids.ts";
 import { recordKey, wins } from "../domain/syncMerge.ts";
 import type { RowRecord } from "../domain/types.ts";
 
@@ -168,7 +169,7 @@ export const deviceIdOf = (store: Store): Effect.Effect<string, StorageError> =>
   Effect.gen(function* () {
     const existing = yield* store.getMeta("device_id");
     if (existing) return existing;
-    const id = `dev-${crypto.randomUUID().slice(0, 8)}`;
+    const id = `dev-${uuid().slice(0, 8)}`;
     yield* store.setMeta("device_id", id);
     return id;
   });

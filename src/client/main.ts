@@ -81,7 +81,7 @@ export async function startApp(): Promise<void> {
     app = await Effect.runPromise(boot());
   } catch (error) {
     setStatus("local storage unavailable");
-    toast(`Could not open the local database: ${String((error as Error)?.message ?? error)}. Private browsing blocks offline storage.`, "err");
+    toast(`Could not open the local database: ${String((error as Error)?.message ?? error)}. Private browsing blocks offline storage — so does any address the browser will not trust for storage.`, "err");
     return;
   }
 

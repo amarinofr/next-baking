@@ -3,18 +3,10 @@
 import { buildRecipeView, type IngredientUse, type MixUse, type RecipeMathInput } from "../../domain/calc.ts";
 import { componentsOf, recipeMathInput } from "../../domain/state.ts";
 import type { Recipe } from "../../domain/schema.ts";
-import { askConfirm, clear, el, euro, grams, num, pct, runAction, runUi, toast, waterGauge } from "../dom.ts";
+import { askConfirm, clear, el, euro, grams, num, pct, runAction, runUi, toast, waterSplit } from "../dom.ts";
 import { recipeInputFromForm } from "../app.ts";
+import { actionsRow, basicsPanel, figuresBlock, figuresPanel, groupSheet, numberField, pageHead, textField, type GroupSpec } from "./formKit.ts";
 import { type ViewCtx } from "./context.ts";
-
-const text = (name: string, label: string, value = ""): HTMLElement =>
-  el("div", { class: "field" }, el("label", { for: name }, label), el("input", { id: name, name, type: "text", value }));
-
-const number = (name: string, label: string, value: number | string): HTMLElement =>
-  el("div", { class: "field" }, el("label", { for: name }, label), el("input", { id: name, name, type: "number", step: "any", value: String(value) }));
-
-const picker = (name: string, options: Array<[string, string]>, selected?: string): HTMLElement =>
-  el("select", { name }, ...options.map(([value, label]) => el("option", { value, selected: selected === value ? "selected" : undefined }, label)));
 
 /** Category picker. With no categories on this device the stored value is carried through untouched. */
 function categoryField(ctx: ViewCtx, recipe?: Recipe): HTMLElement {
@@ -44,74 +36,63 @@ export function renderRecipeForm(ctx: ViewCtx, mountPoint: HTMLElement, editingI
     return i ? `${i.name} (${i.category}, €${i.price.toFixed(2)}/kg)` : id;
   };
 
-  const mixOptions: Array<[string, string]> = [["", "-- Select --"], ...mixes.map((m) => [m.id, m.name] as [string, string])];
-  const dryOptions: Array<[string, string]> = [["", "-- Select --"], ...dryIngredients.map((i) => [i.id, labelOf(i.id)] as [string, string])];
-  const wetOptions: Array<[string, string]> = [["", "-- Select --"], ...wetIngredients.map((i) => [i.id, labelOf(i.id)] as [string, string])];
+  const mixOptions: Array<[string, string]> = [["", "Select a mix…"], ...mixes.map((m) => [m.id, m.name] as [string, string])];
+  const dryOptions: Array<[string, string]> = [["", "Select an ingredient…"], ...dryIngredients.map((i) => [i.id, labelOf(i.id)] as [string, string])];
+  const wetOptions: Array<[string, string]> = [["", "Select an ingredient…"], ...wetIngredients.map((i) => [i.id, labelOf(i.id)] as [string, string])];
 
-  const panel = el("pre", { class: "preview" });
-  const gaugeSlot = el("div");   // the same water figures, drawn
+  const panel = figuresBlock();
+  const gaugeSlot = el("div");   // the same water figures, drawn as two coloured blocks
   const previousInput = editingId ? recipeMathInput(state, editingId) : undefined;
 
   const form = el("form", { class: "max-w" });
 
-  // ---- the row editors (flour mixes / dry / liquid+hybrid / main liquids) ----
-  const section = (
-    title: string,
-    nameKey: string,
-    amountKey: string,
-    options: Array<[string, string]>,
-    existing: Array<{ idOrMix: string; amount: number }>,
-    unit: "g" | "%",
-  ): HTMLElement => {
-    const rows = el("div", { class: "rows" });
+  // ---- each family of rows gets the same box: a coloured sheet with its own add-row control ----
+  const linkGroups: Array<GroupSpec> = [
+    {
+      title: "Flour mixes — the hydration base", nameKey: "mix_id", amountKey: "mix_amount", options: mixOptions,
+      unit: "g", sheet: "sheet-butter",
+      existing: (previousInput?.mixes ?? []).map((m) => ({ idOrMix: m.mix_id, amount: m.amount })),
+    },
+    {
+      title: "Dry ingredients", nameKey: "dry_ingredient_id", amountKey: "dry_ingredient_amount", options: dryOptions,
+      unit: "g", sheet: "sheet-sage",
+      existing: (previousInput?.ingredients ?? []).filter((i) => i.category === "dry").map((i) => ({ idOrMix: i.ingredient_id, amount: i.amount })),
+    },
+    {
+      title: "Liquids & hybrids", nameKey: "liquid_ingredient_id", amountKey: "liquid_ingredient_amount", options: wetOptions,
+      unit: "g", sheet: "sheet-sky",
+      existing: (previousInput?.ingredients ?? []).filter((i) => i.category !== "dry").map((i) => ({ idOrMix: i.ingredient_id, amount: i.amount })),
+    },
+    {
+      title: "Main liquids — share of the target water", nameKey: "main_liquid_ingredient_id", amountKey: "main_liquid_percentage", options: wetOptions,
+      unit: "%", sheet: "sheet-lilac",
+      existing: (previousInput?.main_liquids ?? []).map((l) => ({ idOrMix: l.ingredient_id, amount: l.percentage })),
+    },
+  ];
 
-    const addRow = (selectValue = "", amount: number | string = ""): HTMLElement => {
-      const row = el("div", { class: "row component-row" },
-        picker(nameKey, options, selectValue),
-        el("input", { name: amountKey, type: "number", step: "any", placeholder: unit, value: String(amount) }),
-      );
-      const remove = el("button", { class: "remove", type: "button" }, "remove");
-      remove.addEventListener("click", () => { row.remove(); recompute(); });
-      row.append(remove);
-      row.querySelectorAll("select, input").forEach((node) => node.addEventListener("change", recompute));
-      rows.append(row);
-      return row;
-    };
-
-    for (const item of existing) addRow(item.idOrMix, item.amount);
-    if (existing.length === 0) addRow();
-
-    const addButton = el("button", { class: "add-row", type: "button" }, "+ Add Row");
-    addButton.addEventListener("click", () => { addRow(); recompute(); });
-
-    return el("div", { class: "field" },
-      el("div", { class: "form-head-row" }, el("span", {}, title), addButton),
-      rows,
-    );
-  };
+  const deleteButton = recipe ? (() => {
+    const button = el("button", { class: "danger-solid", type: "button" }, `Delete "${recipe.name}"`);
+    button.addEventListener("click", () => {
+      if (!askConfirm(`Delete recipe "${recipe.name}"? Its ingredient and mix links are removed as well.`)) return;
+      runAction(ctx.app.repo.deleteRecipe(recipe.id)).then((done) => { if (!done) return; ctx.markChanged(); ctx.navigate("/recipes"); });
+    });
+    return button;
+  })() : undefined;
 
   form.append(
     editingId ? el("input", { type: "hidden", name: "id", value: editingId }) : "",
-    text("name", "Name", recipe?.name ?? ""),
-    el("div", { class: "row" }, number("servings", "Servings", recipe?.servings ?? 1), number("hydration_percent", "Hydration (%)", recipe?.hydration_percent ?? 65)),
-    categoryField(ctx, recipe),
-    el("div", { class: "field" }, el("label", { for: "instructions" }, "Instructions"), el("textarea", { id: "instructions", name: "instructions" }, recipe?.instructions ?? "")),
 
-    section("Flour Mixes (the hydration base)", "mix_id", "mix_amount", mixOptions,
-      (previousInput?.mixes ?? []).map((m) => ({ idOrMix: m.mix_id, amount: m.amount })), "g"),
+    basicsPanel(
+      textField("name", "Name", recipe?.name ?? ""),
+      el("div", { class: "row" }, numberField("servings", "Servings", recipe?.servings ?? 1), numberField("hydration_percent", "Hydration (%)", recipe?.hydration_percent ?? 65)),
+      categoryField(ctx, recipe),
+      el("div", { class: "field" }, el("label", { for: "instructions" }, "Instructions"), el("textarea", { id: "instructions", name: "instructions" }, recipe?.instructions ?? "")),
+    ),
 
-    section("Dry Ingredients", "dry_ingredient_id", "dry_ingredient_amount", dryOptions,
-      (previousInput?.ingredients ?? []).filter((i) => i.category === "dry").map((i) => ({ idOrMix: i.ingredient_id, amount: i.amount })), "g"),
+    ...linkGroups.map((group) => groupSheet({ ...group, onChange: recompute })),
 
-    section("Liquid & Hybrid Ingredients", "liquid_ingredient_id", "liquid_ingredient_amount", wetOptions,
-      (previousInput?.ingredients ?? []).filter((i) => i.category !== "dry").map((i) => ({ idOrMix: i.ingredient_id, amount: i.amount })), "g"),
-
-    section("Main Liquids (share of the target water)", "main_liquid_ingredient_id", "main_liquid_percentage", wetOptions,
-      (previousInput?.main_liquids ?? []).map((l) => ({ idOrMix: l.ingredient_id, amount: l.percentage })), "%"),
-
-    panel,
-    gaugeSlot,
-    el("div", { class: "right" }, el("button", { class: "primary save", type: "submit" }, "Save")),
+    figuresPanel("While you edit", panel, gaugeSlot),
+    actionsRow(deleteButton),
   );
 
   form.addEventListener("change", recompute);
@@ -175,7 +156,7 @@ export function renderRecipeForm(ctx: ViewCtx, mountPoint: HTMLElement, editingI
       `Cost: ${euro(view.total_cost)} total · ${euro(view.cost_per_serving)} per serving`,
       `Per serving: ${num(view.nutrition_per_serving.calories, 0)} kcal · P ${num(view.nutrition_per_serving.protein)}/F ${num(view.nutrition_per_serving.fats)}/C ${num(view.nutrition_per_serving.carbs)} g`,
     ].join("\n");
-    gaugeSlot.replaceChildren(waterGauge(view.target_water, view.water_from_liquids));
+    gaugeSlot.replaceChildren(waterSplit(view.target_water, view.water_from_liquids));
   }
 
   form.addEventListener("submit", async (event) => {
@@ -190,17 +171,6 @@ export function renderRecipeForm(ctx: ViewCtx, mountPoint: HTMLElement, editingI
   });
 
   clear(mountPoint);
-  mountPoint.append(el("div", { class: "page-head" }, el("h2", {}, recipe ? "Edit Recipe" : "Create New Recipe"), el("a", { class: "plain", href: "/recipes" }, "Cancel")));
-
-  if (recipe) {
-    const deleteButton = el("button", { class: "danger-solid", type: "button" }, `Delete "${recipe.name}"`);
-    deleteButton.addEventListener("click", () => {
-      if (!askConfirm(`Delete recipe "${recipe.name}"?`)) return;
-      runAction(ctx.app.repo.deleteRecipe(recipe.id)).then((done) => { if (!done) return; ctx.markChanged(); ctx.navigate("/recipes"); });
-    });
-    mountPoint.append(el("div", { class: "right" }, deleteButton));
-  }
-
-  mountPoint.append(form);
+  mountPoint.append(pageHead(recipe ? "Edit recipe" : "New recipe", "/recipes"), form);
   recompute();
 }

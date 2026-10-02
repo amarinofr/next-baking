@@ -51,7 +51,7 @@ export function renderSettings(ctx: ViewCtx, mountPoint: HTMLElement, scheduler?
   const hubInput = el("input", { id: "hub", name: "hub_url", type: "text", spellcheck: "false" }) as HTMLInputElement;
   const saveHubButton = el("button", { class: "primary", type: "submit" }, "Save address");
 
-  const hubForm = el("form", { class: "panel" });
+  const hubForm = el("form", { class: "panel tinted sheet-butter" });
   hubForm.append(
     el("h3", {}, "Replication hub"),
     el("p", { class: "hint" }, "Every device keeps its own copy and works with no network at all. When a device can reach the hub it pushes what changed and pulls what it missed — last write wins per row."),
@@ -95,7 +95,7 @@ export function renderSettings(ctx: ViewCtx, mountPoint: HTMLElement, scheduler?
   mountPoint.append(
     el("div", { class: "page-head" }, el("h2", {}, "Sync & backups")),
 
-    el("section", { class: "panel" },
+    el("section", { class: "panel tinted sheet-sky" },
       el("h3", {}, "Syncing"),
       el("div", { class: "row switch" }, autoToggle, el("label", { for: "auto-sync" }, "Sync automatically while online")),
       el("div", { class: "row" }, syncButton),
@@ -111,7 +111,7 @@ export function renderSettings(ctx: ViewCtx, mountPoint: HTMLElement, scheduler?
 
     hubForm,
 
-    el("section", { class: "panel" },
+    el("section", { class: "panel tinted sheet-sage" },
       el("h3", {}, "Backup & transfer"),
       el("p", { class: "hint" }, "JSON snapshots include delete tombstones, so importing onto another device converges instead of resurrecting old rows."),
       el("div", { class: "row" }, exportButton),

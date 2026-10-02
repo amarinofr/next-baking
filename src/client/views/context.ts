@@ -20,11 +20,12 @@ export interface ViewCtx {
 export const categoryOf = (state: AppState, categoryId?: string | null): RecipeCategory | undefined =>
   categoryId ? state.categories.get(categoryId) : undefined;
 
-/** Small colored label, e.g. "Bread" in the category's own colour. */
+/** A quiet pill in the category's own colour — colour only, no dot, no glyph. */
 export function categoryChip(state: AppState, categoryId?: string | null): HTMLElement | undefined {
   const category = categoryOf(state, categoryId);
   if (!category) return undefined;
-  const dot = el("span", { class: "chip-dot" });
-  dot.style.background = category.color;
-  return el("span", { class: "chip" }, dot, category.name);
+  const chip = el("span", { class: "chip" }, category.name);
+  chip.style.setProperty("--chip-bg", `color-mix(in srgb, ${category.color} 24%, #fffdf7)`);
+  chip.style.setProperty("--chip-ink", `color-mix(in srgb, ${category.color} 78%, #211c15)`);
+  return chip;
 }

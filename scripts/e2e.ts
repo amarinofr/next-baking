@@ -209,7 +209,7 @@ const main = async (): Promise<void> => {
     await ready(A, "A recipe detail");
     const detailText = await bodyText(A);
     check("clicking anywhere on a recipe row opens it", detailPath.startsWith("/recipes/"), detailPath);
-    check("recipe detail shows hydration + price sections", /Target water/.test(detailText) && /Total liquid/.test(detailText) && /Per Serving/.test(detailText));
+    check("recipe detail shows hydration, cost and nutrition", /Target water/i.test(detailText) && /Total liquid/i.test(detailText) && /whole recipe/i.test(detailText) && /per serving/i.test(detailText));
 
     // servings scaler must not write anything to the store
     step = "servings scaler";
@@ -303,8 +303,12 @@ const main = async (): Promise<void> => {
     step = "mixes screen";
     await settleTry("open Flour Mixes tab", () => A.evaluate(() => { document.querySelector<HTMLAnchorElement>('nav.tabs [data-tab="mixes"]')?.click(); }));
     await waitForPath(A, /^\/mixes$/);
+    // the router changes the URL before the new view is drawn — clicking a row that is still on screen from the
+    // previous screen used to click an ingredient by mistake
+    const mixesDrawn = await pollPage(A, async () => /All Flour Mixes/.test(await bodyText(A)), 8000, 400);
+    check("the flour mixes screen draws its own list before anything is clicked", mixesDrawn, mixesDrawn ? "mix list present" : "still showing the previous screen");
     const mixText = await bodyText(A);
-    check("flour mixes show their own total and cost per kg", /\d+(?:\.\d+)? ?g · €[\d.,]+\/kg/.test(mixText), mixText.match(/\d+(?:\.\d+)? ?g · €[\d.,]+\/kg/)?.[0] ?? "not found");
+    check("flour mixes show their cost per kg", /€[\d.,]+\/kg/.test(mixText), mixText.match(/€[\d.,]+\/kg/)?.[0] ?? "not found");
 
     const firstMix = await A.$eval("table.data tbody tr td.name", (n) => (n.textContent ?? "").trim());
     await clickRow(A, firstMix);

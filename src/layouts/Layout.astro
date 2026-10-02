@@ -5,10 +5,10 @@ interface Props { readonly title?: string; readonly page?: string }
 
 const { title = "Recipes", page = "home" } = Astro.props;
 
-// Same tabs, same labels, same order as the original app (Sync is the only addition).
+// Same tabs, same order as before — plain labels now, no brackets and no glyphs.
 const tabs = [
   { id: "ingredients", label: "Ingredients", href: "/ingredients" },
-  { id: "mixes", label: "Flour Mixes", href: "/mixes" },
+  { id: "mixes", label: "Flour mixes", href: "/mixes" },
   { id: "recipes", label: "Recipes", href: "/" },
   { id: "settings", label: "Sync", href: "/settings" },
 ];
@@ -25,9 +25,11 @@ const activeFor = (id: string): boolean =>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#f0e7d8" />
+    <meta name="theme-color" content="#efe6d7" />
     <meta name="color-scheme" content="light" />
     <meta name="description" content="Offline-first baking recipes, flour mixes and hydration maths." />
+    <link rel="preload" href="/fonts/karla-400.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/karla-700.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
@@ -35,23 +37,11 @@ const activeFor = (id: string): boolean =>
   </head>
   <body data-page={page} data-sync="syncing">
     <header class="top">
-      <h1>
-        <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
-          <g class="grain" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
-            <path d="M12 21V9" />
-            <path d="M12 9c0-3 1.6-5 3.4-6C15.8 5.4 14.6 7.6 12 9z" />
-            <path d="M12 9c0-3-1.6-5-3.4-6C8.6 5.4 9.8 7.6 12 9z" />
-            <path d="M12 14c0-2.4 1.4-4 3-4.8.4 2-.6 3.8-3 4.8z" />
-            <path d="M12 14c0-2.4-1.4-4-3-4.8-.4 2 .6 3.8 3 4.8z" />
-          </g>
-          <circle cx="12" cy="21" r="1" fill="currentColor" opacity=".7" />
-        </svg>
-        Baking Recipes App
-      </h1>
+      <h1>Baking <em>recipes</em></h1>
       <nav class="tabs" aria-label="Sections">
         <span class="tab-glider" aria-hidden="true"></span>
         {tabs.map((tab) => (
-          <a href={tab.href} data-tab={tab.id} aria-current={activeFor(tab.id) ? "page" : undefined}>[{tab.label}]</a>
+          <a href={tab.href} data-tab={tab.id} aria-current={activeFor(tab.id) ? "page" : undefined}>{tab.label}</a>
         ))}
       </nav>
     </header>

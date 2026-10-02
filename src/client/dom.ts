@@ -45,52 +45,29 @@ export function stagger<T extends HTMLElement>(nodes: T[]): T[] {
   return nodes;
 }
 
-const SVG_NS = "http://www.w3.org/2000/svg";
-
-/** Small ring in the corner of a recipe card: how hydrated this dough is. */
-export function hydrationRing(percent: number): HTMLElement {
-  // A CSS dial rather than an SVG one: no viewBox geometry to get wrong at small sizes,
-  // and --p is a registered custom property, so the fill itself animates.
-  const fill = Math.max(0, Math.min(100, percent));
-  const dial = el("span", { class: "dial", "aria-hidden": "true" });
-  dial.style.setProperty("--p", "0");
-  dial.append(el("b", {}, `${Math.round(percent)}%`));
-  if (reduceMotion()) dial.style.setProperty("--p", String(fill));
-  else requestAnimationFrame(() => dial.style.setProperty("--p", String(fill)));
-  return dial;
+/** Which coloured sheet a hydration figure belongs to. Colour is the reading device:
+ *  butter dry dough · sage a normal one · sky a wet one · lilac a batter-like one. */
+export function hydrationSheet(percent: number): string {
+  if (percent < 55) return "sheet-butter";
+  if (percent < 80) return "sheet-sage";
+  if (percent < 100) return "sheet-sky";
+  return "sheet-lilac";
 }
 
-/** How a dough's water is built up: main liquids vs water carried by ingredients. */
-export function waterGauge(mainWater: number, carriedWater: number): HTMLElement {
-  const total = Math.max(mainWater + carriedWater, 0.0001);
-  const seg = (kind: "main" | "hybrid", grams: number) =>
-    el("div", { class: `gauge-seg ${kind}`, style: `width:${((grams / total) * 100).toFixed(2)}%` });
+/** The two ways water reaches a dough, told as two coloured figures — no bar, no dial. */
+export function waterSplit(mainWater: number, carriedWater: number): HTMLElement {
+  const block = (sheet: string, label: string, value: number): HTMLElement =>
+    el("div", { class: sheet }, el("span", {}, label), el("b", {}, grams(value)));
 
   return el(
     "div",
-    { class: "gauge" },
-    el("div", { class: "gauge-bar" }, ...(mainWater > 0 ? [seg("main", mainWater)] : []), ...(carriedWater > 0 ? [seg("hybrid", carriedWater)] : [])),
-    el(
-      "div",
-      { class: "gauge-key" },
-      el("span", {}, el("i", { class: "main" }), `from main liquids · ${grams(mainWater)}`),
-      el("span", {}, el("i", { class: "hybrid" }), `carried by ingredients · ${grams(carriedWater)}`),
-    ),
+    { class: "split" },
+    block("sheet-sky", "from main liquids", mainWater),
+    block("sheet-clay", "carried by ingredients", carriedWater),
   );
 }
 
-/** Proportional bar of a flour mix's components, in the order given. */
-export function mixBar(parts: Array<{ grams: number }>): HTMLElement {
-  const total = parts.reduce((sum, part) => sum + part.grams, 0) || 1;
-  const shades = ["#c1893b", "#5f7a4c", "#35708f", "#b0532c", "#9c6a25", "#7d8f69", "#8a6f52", "#265770"];
-  return el(
-    "div",
-    { class: "mixbar", "aria-hidden": "true" },
-    ...parts.map((part, index) => el("div", { style: `flex:${Math.max(part.grams, 0.001)}; background:${shades[index % shades.length]}` })),
-  );
-}
-
-/** A figure that just changed gets a brief warm flash so you notice it. */
+/** A figure that just changed gets one warm stroke so you notice it. */
 export const flash = (node: Element | null | undefined): void => {
   if (!node || reduceMotion()) return;
   node.classList.remove("flash");

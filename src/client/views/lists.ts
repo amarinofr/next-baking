@@ -2,12 +2,22 @@
  *  Markup follows the original app's tables/cards; whole rows and cards are clickable. */
 
 import { mixCostPerKg, summarizeRecipe } from "../../domain/calc.ts";
-import { componentsOf, mixTotalGrams, recipeMathInput, type AppState } from "../../domain/state.ts";
+import { componentsOf, recipeMathInput, type AppState } from "../../domain/state.ts";
 import type { Ingredient } from "../../domain/schema.ts";
-import { askConfirm, clear, countUp, el, euro, grams, hydrationRing, mixBar, pct, runAction, runUi, stagger, toast } from "../dom.ts";
+import { askConfirm, clear, countUp, el, euro, hydrationSheet, pct, runAction, runUi, stagger, toast } from "../dom.ts";
 import { categoryChip, type ViewCtx } from "./context.ts";
 
 const byName = (a: { name: string }, b: { name: string }): number => a.name.localeCompare(b.name);
+
+/** Ingredient categories always wear the same colour: dry butter paper, hybrid lilac, liquid sky. */
+const ingredientSheet = (category?: string | null): string => {
+  if (category === 'liquid') return 'sheet-sky';
+  if (category === 'hybrid') return 'sheet-lilac';
+  return 'sheet-butter';
+};
+
+/** Flour mixes rotate through the palette so neighbouring rows never look alike. */
+const MIX_SHEETS = ['sheet-blush', 'sheet-clay', 'sheet-sage', 'sheet-lilac', 'sheet-butter', 'sheet-sky'];
 
 const cell = (text: string, className?: string): HTMLElement => el("td", { class: className }, text);
 
@@ -57,13 +67,11 @@ export function renderIngredients(ctx: ViewCtx, mountPoint: HTMLElement): void {
 
     const rows = filtered.map((ing) => {
       const categoryText = ing.category === "hybrid" ? `hybrid · ${pct((ing.hybrid_water ?? 0) * 100)} water` : ing.category;
-      // colour-coded so you can see at a glance what this thing does to the water balance
-      const categoryCell = el("td", { class: "dim capitalize" },
-        el("span", { class: "chip" }, el("i", { class: `dot ${ing.category ?? "dry"}`, "aria-hidden": "true" }), categoryText),
-      );
+      // the row's own paper colour says what this ingredient does to the water balance
+      const categoryCell = el("td", { class: "dim capitalize" }, el("span", { class: "chip" }, categoryText));
       const tr = el(
         "tr",
-        {},
+        { class: `wash ${ingredientSheet(ing.category)}` },
         cell(ing.name, "name"),
         categoryCell,
         cell(euro(ing.price), "dim"),
@@ -116,22 +124,15 @@ export function renderMixes(ctx: ViewCtx, mountPoint: HTMLElement): void {
     return;
   }
 
-  const rows = all.map((mix) => {
+  const rows = all.map((mix, index) => {
     const components = componentsOf(state, mix.id);
-    const total = mixTotalGrams(components);
     const cost = mixCostPerKg(components.map((c) => ({ amount: c.amount, price: state.ingredients.get(c.ingredient_id)?.price ?? 0 })));
 
-    // the name cell carries a little proportional bar: what this mix is made of, at a glance
-    const nameCell = el("td", { class: "name" }, mix.name);
-    if (components.length > 0) {
-      const bar = mixBar(components.map((c) => ({ grams: c.amount })));
-      bar.setAttribute("title", components.map((c) => `${state.ingredients.get(c.ingredient_id)?.name ?? c.ingredient_id} · ${grams(c.amount)}`).join("\n"));
-      nameCell.append(bar);
-    }
-
-    const tr = el("tr", {},
-      nameCell,
-      cell(`${components.length} ingredient${components.length === 1 ? "" : "s"} · ${grams(total)} · ${euro(cost)}/kg`, "dim"),
+    // name · cost · controls. What a mix is made of is worth reading while editing it, not in a list.
+    const sheet = MIX_SHEETS[index % MIX_SHEETS.length] ?? 'sheet-butter';
+    const tr = el("tr", { class: `wash ${sheet}` },
+      el("td", { class: "name" }, mix.name),
+      cell(`${euro(cost)}/kg`, "dim num"),
       el("td", {}, actions([
         ["edit", "", () => ctx.navigate(`/mixes/${mix.id}/edit`)],
         ["duplicate", "", () => runUi(ctx.app.repo.duplicateMix(mix.id)).then((rows) => { if (rows?.[0]) ctx.navigate(`/mixes/${String(rows[0].cols.id)}/edit`); })],
@@ -149,7 +150,7 @@ export function renderMixes(ctx: ViewCtx, mountPoint: HTMLElement): void {
   mountPoint.append(
     el("div", { class: "page-head" }, el("h2", {}, "All Flour Mixes"), el("a", { class: "create", href: "/mixes/new" }, "+ Create New")),
     el("div", { class: "table-wrap" }, el("table", { class: "data" },
-      el("thead", {}, el("tr", {}, el("th", {}, "Name"), el("th", {}, "Ingredients"), el("th", {}))),
+      el("thead", {}, el("tr", {}, el("th", {}, "Name"), el("th", { class: "num" }, "Cost"), el("th", {}))),
       el("tbody", {}, ...stagger(rows)),
     )),
     el("p", { class: "hint" }, "A mix is defined by its components — recipes scale it proportionally, so the total does not have to reach 1000 g."),
@@ -169,8 +170,9 @@ const recipeRows = (state: AppState): RecipeRow[] =>
     })
     .sort(byName);
 
-/** The recipe index — one list, no grid variant anywhere. Each row carries a small dial showing
- *  how hydrated that dough is; edit / duplicate / delete live in the last column, as before. */
+/** The recipe index — one list. Each row sits on the paper colour of its hydration band
+ *  (dry butter · normal sage · wet sky · batter lilac); the percentage is a figure, not a dial.
+ *  edit / duplicate / delete live in the last column, as before. */
 export function renderRecipeIndex(ctx: ViewCtx, mountPoint: HTMLElement): void {
   const rowsData = recipeRows(ctx.state);
 
@@ -192,10 +194,8 @@ export function renderRecipeIndex(ctx: ViewCtx, mountPoint: HTMLElement): void {
     const costCell = el("td", { class: "dim num" });
     countUp(costCell, row.cost, euro);
 
-    const tr = el("tr", {},
+    const tr = el("tr", { class: `wash ${hydrationSheet(row.hydration)}` },
       nameCell,
-      cell(String(row.servings), "dim num"),
-      el("td", { class: "dim hydration" }, hydrationRing(row.hydration)),   // the dial carries the number inside it
       costCell,
       el("td", {}, actions([
         ["edit", "", () => ctx.navigate(`/recipes/${row.id}/edit`)],
@@ -211,7 +211,7 @@ export function renderRecipeIndex(ctx: ViewCtx, mountPoint: HTMLElement): void {
   });
 
   mountPoint.append(el("div", { class: "table-wrap" }, el("table", { class: "data compact" },
-    el("thead", {}, el("tr", {}, el("th", {}, "Name"), el("th", {}, "Servings"), el("th", {}, "Hydration"), el("th", { class: "num" }, "Cost"), el("th", {}))),
+    el("thead", {}, el("tr", {}, el("th", {}, "Name"), el("th", { class: "num" }, "Cost"), el("th", {}))),
     el("tbody", {}, ...stagger(rows)),
   )));
 }

@@ -1,28 +1,12 @@
-/** Ingredient & flour-mix forms (create and edit share one implementation), styled like the old app. */
+/** Ingredient & flour-mix forms (create and edit share one implementation), built from the same boxes as the recipe editor. */
 
 import { mixCostPerKg, mixNutritionPer100g } from "../../domain/calc.ts";
 import { componentsOf, mixTotalGrams } from "../../domain/state.ts";
 import type { Ingredient } from "../../domain/schema.ts";
 import { askConfirm, clear, el, euro, grams, num, runAction, runUi, toast } from "../dom.ts";
 import { ingredientInputFromForm, mixInputFromForm } from "../app.ts";
+import { actionsRow, basicsPanel, figuresBlock, figuresPanel, groupSheet, numberField, pageHead, selectField, textField } from "./formKit.ts";
 import type { ViewCtx } from "./context.ts";
-
-const text = (name: string, label: string, value = "", placeholder = ""): HTMLElement =>
-  el("div", { class: "field" }, el("label", { for: name }, label), el("input", { id: name, name, type: "text", value, placeholder }));
-
-const number = (name: string, label: string, value: number | string, placeholder = ""): HTMLElement =>
-  el("div", { class: "field" }, el("label", { for: name }, label), el("input", { id: name, name, type: "number", step: "any", value: String(value), placeholder }));
-
-const select = (name: string, label: string, options: Array<[value: string, label: string]>, selected?: string): HTMLElement =>
-  el("div", { class: "field" },
-    el("label", { for: name }, label),
-    el("select", { id: name, name }, ...options.map(([value, text2]) => el("option", { value, selected: selected === value ? "selected" : undefined }, text2))),
-  );
-
-const pageHead = (title: string, cancelHref: string): HTMLElement =>
-  el("div", { class: "page-head" }, el("h2", {}, title), el("a", { class: "plain", href: cancelHref }, "Cancel"));
-
-const saveRow = (caption: string): HTMLElement => el("div", { class: "right" }, el("button", { class: "primary save", type: "submit" }, caption));
 
 // ---------------- ingredient ----------------
 
@@ -34,36 +18,38 @@ export function renderIngredientForm(ctx: ViewCtx, mountPoint: HTMLElement, edit
 
   const form = el("form", { class: "max-w" });
 
-  const waterField = number("water_percent", "Water Percentage (%)", ing.category === "hybrid" ? (ing.hybrid_water ?? 0) * 100 : 0);
+  const waterField = numberField("water_percent", "Water Percentage (%)", ing.category === "hybrid" ? (ing.hybrid_water ?? 0) * 100 : 0);
   waterField.classList.toggle("hidden", ing.category !== "hybrid");
+
+  const nutritionInput = (name: string, value: number): HTMLElement =>
+    el("input", { id: name, name, type: "number", step: "any", value: String(value) });
 
   form.append(
     editingId ? el("input", { type: "hidden", name: "id", value: editingId }) : "",
-    text("name", "Name", ing.name ?? ""),
-    select("category", "Type", [["dry", "Dry"], ["hybrid", "Hybrid"], ["liquid", "Liquid"]], ing.category ?? "dry"),
-    waterField,
-    number("price", "Price (€/1000g)", ing.price ?? 0),
 
-    // Nutrition lives behind a disclosure, exactly as in the original form.
-    el("details", { class: "nutrition" },
-      el("summary", {}, "Nutrition per 100g (optional)"),
-      el("div", { class: "inner" },
-        el("div", {}, el("label", {}, "Calories"), number2("calories", ing.calories ?? 0)),
-        el("div", {}, el("label", {}, "Protein (g)"), number2("protein", ing.protein ?? 0)),
-        el("div", {}, el("label", {}, "Fats (g)"), number2("fats", ing.fats ?? 0)),
-        el("div", {}, el("label", {}, "Carbs (g)"), number2("carbs", ing.carbs ?? 0)),
-        el("div", {}, el("label", {}, "Sugar (g)"), number2("sugar", ing.sugar ?? 0)),
-        el("div", {}, el("label", {}, "Fiber (g)"), number2("fiber", ing.fiber ?? 0)),
+    basicsPanel(
+      textField("name", "Name", ing.name ?? ""),
+      selectField("category", "Type", [["dry", "Dry"], ["hybrid", "Hybrid"], ["liquid", "Liquid"]], ing.category ?? "dry"),
+      waterField,
+      numberField("price", "Price (€/1000g)", ing.price ?? 0),
+
+      // Nutrition lives behind a disclosure, exactly as in the original form.
+      el("details", { class: "nutrition" },
+        el("summary", {}, "Nutrition per 100g (optional)"),
+        el("div", { class: "inner" },
+          el("div", {}, el("label", {}, "Calories"), nutritionInput("calories", ing.calories ?? 0)),
+          el("div", {}, el("label", {}, "Protein (g)"), nutritionInput("protein", ing.protein ?? 0)),
+          el("div", {}, el("label", {}, "Fats (g)"), nutritionInput("fats", ing.fats ?? 0)),
+          el("div", {}, el("label", {}, "Carbs (g)"), nutritionInput("carbs", ing.carbs ?? 0)),
+          el("div", {}, el("label", {}, "Sugar (g)"), nutritionInput("sugar", ing.sugar ?? 0)),
+          el("div", {}, el("label", {}, "Fiber (g)"), nutritionInput("fiber", ing.fiber ?? 0)),
+        ),
       ),
     ),
 
-    saveRow(existing ? "Save" : "Save"),
+    actionsRow(existing ? deleteControl(ctx, existing.id, existing.name, `Mixes and recipes using it will lose those rows.`, "/ingredients") : undefined),
     el("p", { class: "hint" }, "Prices are always €/1000 g · nutrition per 100 g · metric only."),
   );
-
-  function number2(name: string, value: number): HTMLElement {
-    return el("input", { id: name, name, type: "number", step: "any", value: String(value) });
-  }
 
   const categorySelect = form.querySelector<HTMLSelectElement>("select[name=category]")!;
   categorySelect.addEventListener("change", () => waterField.classList.toggle("hidden", categorySelect.value !== "hybrid"));
@@ -80,18 +66,18 @@ export function renderIngredientForm(ctx: ViewCtx, mountPoint: HTMLElement, edit
   });
 
   clear(mountPoint);
-  mountPoint.append(pageHead(existing ? "Edit Ingredient" : "Create New Ingredient", "/ingredients"));
+  mountPoint.append(pageHead(existing ? "Edit ingredient" : "New ingredient", "/ingredients"), form);
+}
 
-  if (existing) {
-    const deleteButton = el("button", { class: "danger-solid", type: "button" }, `Delete "${existing.name}"`);
-    deleteButton.addEventListener("click", () => {
-      if (!askConfirm(`Delete "${existing.name}"? Mixes and recipes using it will lose those rows.`)) return;
-      runAction(ctx.app.repo.deleteIngredient(existing.id)).then((done) => { if (!done) return; ctx.markChanged(); ctx.navigate("/ingredients"); });
-    });
-    mountPoint.append(el("div", { class: "right" }, deleteButton));
-  }
-
-  mountPoint.append(form);
+/** The destructive control every editor puts beside Save. */
+function deleteControl(ctx: ViewCtx, id: string, name: string, consequence: string, backTo: string): HTMLElement {
+  const button = el("button", { class: "danger-solid", type: "button" }, `Delete "${name}"`);
+  button.addEventListener("click", () => {
+    if (!askConfirm(`Delete "${name}"? ${consequence}`)) return;
+    const removal = backTo === "/ingredients" ? ctx.app.repo.deleteIngredient(id) : ctx.app.repo.deleteMix(id);
+    runAction(removal).then((done) => { if (!done) return; ctx.markChanged(); ctx.navigate(backTo); });
+  });
+  return button;
 }
 
 // ---------------- flour mix ----------------
@@ -104,35 +90,44 @@ export function renderMixForm(ctx: ViewCtx, mountPoint: HTMLElement, editingId?:
   if (editingId && !mix) toast(`Flour mix ${editingId} was not found on this device.`, "err");
 
   const options: Array<[string, string]> = [
-    ["", "-- Select --"],
+    ["", "Select an ingredient…"],
     ...ingredients.map((i) => [i.id, `${i.name} (${i.category}, €${i.price.toFixed(2)}/kg)`] as [string, string]),
   ];
 
-  const rowsWrap = el("div", { class: "rows" });
-  const preview = el("pre", { class: "preview" });
+  const preview = figuresBlock();
 
-  const makeRow = (ingredientId = "", amount: number | string = ""): HTMLElement => {
-    const row = el("div", { class: "row component-row" },
-      el("select", { name: "ingredient_id" }, ...options.map(([value, label]) => el("option", { value, selected: ingredientId === value ? "selected" : undefined }, label))),
-      el("input", { name: "amount", type: "number", step: "any", placeholder: "g", value: String(amount) }),
-    );
-    const remove = el("button", { class: "remove", type: "button" }, "remove");
-    remove.addEventListener("click", () => { row.remove(); updatePreview(); });
-    row.append(remove);
-    row.querySelectorAll("select, input").forEach((node) => node.addEventListener("change", updatePreview));
-    rowsWrap.append(row);
-    return row;
-  };
+  const components = editingId ? componentsOf(state, editingId) : [];
+
+  const form = el("form", { class: "max-w" });
+  const componentSheet = groupSheet({
+    title: "Ingredients",
+    nameKey: "ingredient_id",
+    amountKey: "amount",
+    options,
+    unit: "g",
+    sheet: "sheet-butter",   // a mix is flour, so it wears the same paper as a recipe's flour mixes
+    existing: components.map((c) => ({ idOrMix: c.ingredient_id, amount: c.amount })),
+    onChange: () => updatePreview(),
+  });
+
+  form.append(
+    editingId ? el("input", { type: "hidden", name: "id", value: editingId }) : "",
+
+    basicsPanel(textField("name", "Name", mix?.name ?? "")),
+    componentSheet,
+    figuresPanel("While you edit", preview),
+    actionsRow(mix ? deleteControl(ctx, mix.id, mix.name, `Recipes using it will lose that mix.`, "/mixes") : undefined),
+  );
 
   function updatePreview(): void {
-    const selects = [...rowsWrap.querySelectorAll<HTMLSelectElement>("select[name=ingredient_id]")];
-    const amounts = [...rowsWrap.querySelectorAll<HTMLInputElement>("input[name=amount]")].map((input) => Number(input.value) || 0);
+    const selects = [...componentSheet.querySelectorAll<HTMLSelectElement>("select[name=ingredient_id]")];
+    const amounts = [...componentSheet.querySelectorAll<HTMLInputElement>("input[name=amount]")].map((input) => Number(input.value) || 0);
 
     let total = 0;
     const comps: Array<{ amount: number; price: number; calories: number; protein: number; fats: number; carbs: number; sugar: number; fiber: number }> = [];
 
-    selects.forEach((sel, i) => {
-      const ingredient = state.ingredients.get(sel.value);
+    selects.forEach((select, i) => {
+      const ingredient = state.ingredients.get(select.value);
       const amount = amounts[i] ?? 0;
       if (!ingredient || amount <= 0) return;
       total += amount;
@@ -150,25 +145,6 @@ export function renderMixForm(ctx: ViewCtx, mountPoint: HTMLElement, editingId?:
     ].filter(Boolean).join("\n");
   }
 
-  const addButton = el("button", { class: "add-row", type: "button" }, "+ Add Row");
-  addButton.addEventListener("click", () => { makeRow(); updatePreview(); });
-
-  const form = el("form", { class: "max-w" });
-  form.append(
-    editingId ? el("input", { type: "hidden", name: "id", value: editingId }) : "",
-    text("name", "Name", mix?.name ?? ""),
-    el("div", { class: "field" },
-      el("div", { class: "form-head-row" }, el("span", {}, "Ingredients"), addButton),
-      rowsWrap,
-    ),
-    preview,
-    saveRow("Save"),
-  );
-
-  for (const comp of editingId ? componentsOf(state, editingId) : []) makeRow(comp.ingredient_id, comp.amount);
-  if (editingId && componentsOf(state, editingId).length === 0) makeRow();
-  if (!editingId) makeRow();
-
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const input = await runUi(mixInputFromForm(new FormData(form)));
@@ -181,18 +157,7 @@ export function renderMixForm(ctx: ViewCtx, mountPoint: HTMLElement, editingId?:
   });
 
   clear(mountPoint);
-  mountPoint.append(pageHead(mix ? "Edit Flour Mix" : "Create New Flour Mix", "/mixes"));
-
-  if (mix) {
-    const deleteButton = el("button", { class: "danger-solid", type: "button" }, `Delete "${mix.name}"`);
-    deleteButton.addEventListener("click", () => {
-      if (!askConfirm(`Delete mix "${mix.name}"? Recipes using it will lose that mix.`)) return;
-      runAction(ctx.app.repo.deleteMix(mix.id)).then((done) => { if (!done) return; ctx.markChanged(); ctx.navigate("/mixes"); });
-    });
-    mountPoint.append(el("div", { class: "right" }, deleteButton));
-  }
-
-  mountPoint.append(form);
+  mountPoint.append(pageHead(mix ? "Edit flour mix" : "New flour mix", "/mixes"), form);
   updatePreview();
 }
 
